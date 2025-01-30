@@ -315,8 +315,8 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         with conn.cursor() as cursor:
-                login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-                organisation_details = get_organisation_details(cursor, login_user_id)
+                login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+                organisation_details, org_uuid = get_organisation_details(cursor, login_user_id)
                 if organisation_details:
                     organisation_id = organisation_details['organisationID']
                     organisation_users = get_organisation_users(cursor, organisation_id, organisation_details)

@@ -21,7 +21,7 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client =  zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
@@ -88,7 +88,7 @@ def lambda_handler(event, context):
         variables = {
             'pool_id': {'value': pool_id_raw['value'], 'value_type': pool_id_raw['value_type']},
         }
-        
+
         logging.info("Validating and cleansing user inputs...")
         variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
@@ -96,9 +96,9 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
 
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
-            
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, pool_id)
@@ -109,7 +109,7 @@ def lambda_handler(event, context):
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422: # if 422 then validation 
+        if status_value == 422: # if 422 then validation
             body_value = e.args[1]
         else:
             body_value = 'Unable to delete pool'
@@ -118,7 +118,7 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

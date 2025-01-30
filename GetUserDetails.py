@@ -65,7 +65,7 @@ def lambda_handler(event, context):
 
     try:
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
             user_details = get_user_details(cursor, login_user_id)
 
 

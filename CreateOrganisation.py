@@ -448,7 +448,7 @@ def lambda_handler(event, context):
 
 
         with conn.cursor() as cursor:
-            login_user_id, userUUID = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            login_user_id, userUUID = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
             
             if not is_in_org(cursor, database_dict['schema'], database_dict['users_organisations_table'], login_user_id):
                 
