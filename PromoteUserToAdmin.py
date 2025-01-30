@@ -190,5 +190,5 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'User Promoted To Admin Successfully'
+        'body': 'User Promoted To Owner Successfully'
     }

@@ -66,7 +66,7 @@ def append_user_to_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
                         WHERE poolid = %s AND userid = %s LIMIT 1
                     """
             cursor.execute(get_inserted_row_sql, (pool_id, login_user_id))
-            last_inserted_row = cursor.fetchone()
+            last_inserted_row = cursor.fetchall()
 
             if last_inserted_row:
                 colnames = [desc[0] for desc in cursor.description]
