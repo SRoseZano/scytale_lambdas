@@ -85,8 +85,23 @@ def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisatio
         print(target_user_permissions[0])
         raise Exception(402, "Cannot remove a user of same permission status from group, please demote user first")
         
-def remove_user_from_organisation(cursor, organisation_id,user_id):
+def remove_user_from_organisation(cursor, organisation_id,user_id, org_uuid, user_uuid):
     try:
+
+
+        get_entry = f"""
+                      SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
+                      WHERE userid = %s and organisationid = %s;
+      """
+        cursor.execute(get_entry, (user_id, organisation_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Executing SQL query to remove user from organisation...")
         sql = f"""
             DELETE c
@@ -94,7 +109,25 @@ def remove_user_from_organisation(cursor, organisation_id,user_id):
             WHERE c.userid = %s AND c.organisationid = %s
             """
         cursor.execute(sql, (user_id, organisation_id))
-        
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['users_organisations_table'], 2, user_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid)
+
+        get_entry = f"""
+                              SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}p 
+                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolid = a.poolid AND p.userid = %s AND a.organisationid = %s
+              """
+        cursor.execute(get_entry, (user_id, organisation_id,))
+        last_inserted_row = cursor.fetchall()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Executing SQL query to remove user from any of the organisation pools...")
         sql = f"""
             DELETE p
@@ -102,6 +135,11 @@ def remove_user_from_organisation(cursor, organisation_id,user_id):
             INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolid = a.poolid AND p.userid = %s AND a.organisationid = %s
             """
         cursor.execute(sql, (user_id, organisation_id))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_users_table'], 2, user_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid)
     
     except Exception as e:
         logging.error(f"Error removing user from organisation: {e}")
@@ -199,8 +237,8 @@ def lambda_handler(event, context):
         
 
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_user_in_org(cursor,database_dict['schema'],database_dict['users_organisations_table'], organisation_id, user_id)
             
@@ -211,7 +249,7 @@ def lambda_handler(event, context):
             if login_user_id != user_id: #if removing another user check you have the correct permissions
                 has_permissions_to_remove_target(cursor,login_user_id, user_id,organisation_id)
             
-            remove_user_from_organisation(cursor, organisation_id, user_id)
+            remove_user_from_organisation(cursor, organisation_id, user_id, org_uuid,user_uuid)
             detach_org_policy(cursor,organisation_id,user_id)
             conn.commit()
 

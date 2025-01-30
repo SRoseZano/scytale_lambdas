@@ -101,7 +101,7 @@ def generate_hub_invite(auth_token,organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def create_hub(cursor, serial, registrant, hub_name, organisation_id):
+def create_hub(cursor, serial, registrant, hub_name, organisation_id, org_uuid, user_uuid):
     
     try:
         
@@ -109,11 +109,51 @@ def create_hub(cursor, serial, registrant, hub_name, organisation_id):
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (serial, registrant, hub_name, organisationid, device_type_id) \
                 VALUES (%s, %s, %s, %s, %s)"
         cursor.execute(sql, (serial, registrant, hub_name, organisation_id, 1))
-        
-        # Fetch the ID of the newly inserted device
-        sql_fetch_last_id = "SELECT LAST_INSERT_ID();"
-        cursor.execute(sql_fetch_last_id)
-        hub_id = cursor.fetchone()[0]
+
+
+        try:
+            # Fetch the ID of the newly inserted hub
+            hub_id = zanolambdashelper.helpers.get_last_inserted_row()
+
+            if hub_id is None:
+                logging.error("Unable to get inserted row for audit logs.")
+                raise ValueError("No row ID returned for inserted data.")
+
+        except Exception as e:
+            logging.error(f"Error retrieving last inserted row: {e}")
+            traceback.print_exc()
+            raise  # Re-raise to let the outer block handle it
+
+        # Fetch and log the inserted row
+        try:
+            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']} 
+                                       WHERE hub_id = %s """
+            cursor.execute(get_inserted_row_sql, (hub_id,))
+            last_inserted_row = cursor.fetchone()
+
+            if last_inserted_row:
+                colnames = [desc[0] for desc in cursor.description]
+                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+
+                # Attempt to write to the audit log
+                try:
+                    zanolambdashelper.helpers.submit_to_audit_log(
+                        cursor, database_dict['schema'], database_dict['audit_log_table'],
+                        database_dict['hubs_table'], 3, hub_id, sql,
+                        '{}', inserted_row_json, org_UUID, user_UUID
+                    )
+                    logging.info("Audit log submitted successfully.")
+                except Exception as e:
+                    logging.error(f"Error producing audit log: {e}")
+                    traceback.print_exc()
+                    raise  # Re-raise to let the outer block handle it
+            else:
+                logging.error("No row found after insertion for audit logs.")
+                raise ValueError("Inserted row not found.")
+        except Exception as e:
+            logging.error(f"Error creating default pool entry inserted row: {e}")
+            traceback.print_exc()
+            raise  # Re-raise to let the outer block handle it
         
         sql = f"SELECT hubUUID FROM {database_dict['schema']}.{database_dict['hubs_table']} WHERE hubid = %s"
         cursor.execute(sql, (hub_id,))
@@ -198,13 +238,13 @@ def lambda_handler(event, context):
         serial = variables['serial']['value']
         
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             policy_name = retrieve_org_policy(cursor, organisation_id)
-            hub_uuid = create_hub(cursor, serial, user_email, hub_name, organisation_id)
+            hub_uuid = create_hub(cursor, serial, user_email, hub_name, organisation_id, org_uuid, user_uuid)
             account_details = create_hub_account(cursor)
             invite_code = generate_hub_invite(auth_token,organisation_id)
             certs = register_thing(hub_uuid, policy_name)

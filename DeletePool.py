@@ -27,8 +27,22 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 
-def delete_pool(cursor,pool_id):
+def delete_pool(cursor,pool_id, org_uuid, user_uuid):
     try:
+
+        get_historic_entry = f"""
+                                            SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']}
+                                            WHERE poolID = %s LIMIT 1
+                                        """
+        cursor.execute(get_historic_entry, (pool_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Deleting pool...")
         sql = f"""  
             WITH RECURSIVE PoolHierarchy AS (
@@ -44,6 +58,14 @@ def delete_pool(cursor,pool_id):
             WHERE poolid IN (SELECT poolid FROM PoolHierarchy) AND parentid is not null;
             """
         cursor.execute(sql, (pool_id,))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_table'], 2, pool_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
+
     except Exception as e:
         logging.error(f"Error fetching user identities: {e}")
         traceback.print_exc()
@@ -74,14 +96,14 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
 
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, pool_id)
 
-            delete_pool(cursor, pool_id)
+            delete_pool(cursor, pool_id, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

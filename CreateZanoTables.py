@@ -40,11 +40,41 @@ def lambda_handler(event, context):
              pools_devices, 
              organisation_invites, 
              invite_lookup,
-             device_lookup
+             device_lookup,
+             audit_log,
+             audit_operation_lookup
+             
         """
         cursor.execute(drop_tables)
 
-        
+        create_audit_log_table = """
+            CREATE TABLE audit_log (
+                audit_id SERIAL PRIMARY KEY, -- Auto-increment ID for the audit log
+                table_name VARCHAR(100),     -- Name of the table being audited
+                operation_type VARCHAR(10),  -- Type of operation: INSERT, UPDATE, DELETE
+                record_id INT,               -- ID of the record that was changed
+                sql_query TEXT,               -- the sql query being run
+                old_payload JSONB,              -- Previous data (before the change)
+                new_payload JSONB,              -- New data (after the change)
+                organisationUUID VARCHAR(36)  -- Organisation UUID
+                changed_by_userUUID VARCHAR(36),   -- User UUID who made the change
+                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Time of the change
+                INDEX (organisationUUID),
+                INDEX (userUUID)
+            );
+        """
+
+        cursor.execute(create_audit_log_table)
+
+        create_audit_operation_type_lookup_table = """
+                   CREATE TABLE audit_operation_lookup (
+                        operationID INT PRIMARY KEY,
+                        operation_name VARCHAR(100) NOT NULL
+                   );
+               """
+
+        cursor.execute(create_audit_operation_type_lookup_table)
+
         # Create Users table
         create_users_table = """
             CREATE TABLE users (
@@ -260,6 +290,16 @@ def lambda_handler(event, context):
                 (4, 'PIR_CONTROLLER');
         """
         cursor.execute(insert_device_types)
+
+        # Insert into Permissions_Lookup table
+        insert_operations = """
+               INSERT INTO audit_operation_lookup (operationID, operation_name)
+                   VALUES 
+                       (1, 'UPDATE'),
+                       (2, 'DELETE'),
+                       (3, 'INSERT');
+               """
+        cursor.execute(insert_operations)
 
         
         # Commit the changes and close the connection

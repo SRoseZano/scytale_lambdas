@@ -59,8 +59,23 @@ def get_org_admin_count(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e) from e
 
-def remove_user_from_organisation(cursor, organisation_id,user_id):
+def remove_user_from_organisation(cursor, organisation_id,user_id, org_uuid, user_uuid):
     try:
+
+        get_entry = f"""
+                               SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']} 
+                               WHERE userid = %s AND organisationid = %s
+                               LIMIT 1
+               """
+        cursor.execute(get_entry, (user_id, organisation_id))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Executing SQL query to remove user from organisation...")
         sql = f"""
             DELETE c
@@ -68,6 +83,27 @@ def remove_user_from_organisation(cursor, organisation_id,user_id):
             WHERE c.userid = %s AND c.organisationid = %s
             """
         cursor.execute(sql, (user_id, organisation_id))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['users_organisations_table'], 2, user_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
+
+        get_entry = f"""
+                                      SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} p
+                                      INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolid = a.poolid AND p.userid = %s AND a.organisationid = %s
+                      """
+        cursor.execute(get_entry, (user_id, organisation_id))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         
         logging.info("Executing SQL query to remove user from any of the organisation pools...")
         sql = f"""
@@ -76,6 +112,13 @@ def remove_user_from_organisation(cursor, organisation_id,user_id):
             INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolid = a.poolid AND p.userid = %s AND a.organisationid = %s
             """
         cursor.execute(sql, (user_id, organisation_id))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_users_table'], 2, user_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
     
     except Exception as e:
         logging.error(f"Error removing user from organisation: {e}")
@@ -171,8 +214,8 @@ def lambda_handler(event, context):
         user_id = variables['user_id']['value']
 
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             zanolambdashelper.helpers.is_target_user_in_org(cursor,database_dict['schema'],database_dict['users_organisations_table'], organisation_id, user_id)
             user_admin_status = is_user_admin(cursor,user_id,organisation_id)
             if user_admin_status > 0:
@@ -181,7 +224,7 @@ def lambda_handler(event, context):
                     raise Exception(403, "Unable to leave organisation as last admin, either promote another user to admin or delete your organisation")
                 
             if login_user_id == user_id:
-                remove_user_from_organisation(cursor, organisation_id, user_id)
+                remove_user_from_organisation(cursor, organisation_id, user_id, org_uuid,user_uuid)
                 detach_org_policy(cursor,organisation_id,user_id)
             else:
                 logging.error(f"User is trying to leave under another users id")

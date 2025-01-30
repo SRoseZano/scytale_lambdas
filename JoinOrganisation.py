@@ -32,7 +32,7 @@ policy_attach_lambda = "AttachPolicy"
 def get_user_and_hub_id_by_email(cursor, user_email): #not using helper get id function because this one also requires hubid for join logic
     try:
         logging.info("Getting user details...")
-        sql = f"SELECT userid, hub_user FROM {database_dict['schema']}.{database_dict['users_table']} WHERE email = %s"
+        sql = f"SELECT userid, hub_user, userUUID FROM {database_dict['schema']}.{database_dict['users_table']} WHERE email = %s"
         cursor.execute(sql, (user_email,))
         result = cursor.fetchone()
         if result:
@@ -44,7 +44,7 @@ def get_user_and_hub_id_by_email(cursor, user_email): #not using helper get id f
         traceback.print_exc()
         raise Exception(400, e)
 
-def join_organisation(cursor,invite_code, login_user_id, login_user_hub):
+def join_organisation(cursor,invite_code, login_user_id, login_user_hub, user_uuid):
     try:
         logging.info("Joining Organisation...")
         if invite_code == 1:
@@ -61,7 +61,31 @@ def join_organisation(cursor,invite_code, login_user_id, login_user_hub):
                 join_organisation_sql = f""" INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} (userid, organisationid, permissionid) VALUES (%s, %s, 3);"""
             cursor.execute(join_organisation_sql, (login_user_id, get_organisationid_sql_result[0]))
             logging.info("User organisation relation created")
-            return get_organisationid_sql_result
+
+            get_inserted_row_sql = f"""
+                            SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']} 
+                            WHERE organisationID = %s AND userid = %s LIMIT 1
+                        """
+            cursor.execute(get_inserted_row_sql, (get_organisationid_sql_result[0], login_user_id))
+            last_inserted_row = cursor.fetchone()
+
+            if last_inserted_row:
+                colnames = [desc[0] for desc in cursor.description]
+                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+                row_dict = dict(zip(col_names, last_inserted_row))
+                orgUUID = row_dict['organisationUUID']
+
+                zanolambdashelper.helpers.submit_to_audit_log(
+                    cursor, database_dict['schema'], database_dict['audit_log_table'],
+                    database_dict['users_organisations_table'], 3, login_user_id, join_organisation_sql,
+                    '{}', inserted_row_json, org_uuid, user_uuid
+                )
+                logging.info("Audit log submitted successfully.")
+            else:
+                logging.error("No row found after insertion for audit logs.")
+                raise ValueError("Inserted row not found for audit log.")
+
+            return get_organisationid_sql_result, orgUUID
         else:
             logging.error(f"Invite Code Invalid")
             traceback.print_exc()
@@ -82,13 +106,45 @@ def configure_mqtt(cursor,login_user_id, user_identity, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def update_user_identity_pool(cursor, user_identity, login_user_id):
+def update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, user_uuid):
     logging.info("Setting users identity_pool_id...")
     try:
+
+        get_entry = f"""
+                                            SELECT * FROM {database_dict['schema']}.{database_dict['users_table']}
+                                            WHERE userID = %s LIMIT 1
+                                        """
+        cursor.execute(get_entry, (user_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         # Update the user entry to include the identity pool ID
         sql = f"UPDATE {database_dict['schema']}.{database_dict['users_table']} SET identity_pool_id = %s WHERE userID = %s"
         cursor.execute(sql, (user_identity, login_user_id))
         logging.info("User identity pool updated")
+
+        cursor.execute(get_entry, (user_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['users_table'], 1, user_id, sql,
+            historic_row_json, current_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
+
     except Exception as e:
         logging.error(f"Error updating user identity pool: {e}")
         traceback.print_exc()
@@ -128,7 +184,7 @@ def attach_policy(cursor, organisation_id, user_identity):
         
 
 
-def append_user_to_all_pools(cursor, organisation_id, user_id):
+def append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append user to all org pools...")
         # SQL query to find top level pool and assign to everyone under it
@@ -158,6 +214,26 @@ def append_user_to_all_pools(cursor, organisation_id, user_id):
         """
         
         cursor.execute(sql, (organisation_id, user_id, user_id))
+
+        get_entry = f"""
+                                                 SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
+                                                 WHERE userID = %s LIMIT 1
+                                             """
+        cursor.execute(get_entry, (user_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['users_organisations_table'], 1, user_id, sql,
+            '{}', current_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
     
     except Exception as e:
         logging.error(f"Error adding user to pool: {e}")
@@ -165,7 +241,7 @@ def append_user_to_all_pools(cursor, organisation_id, user_id):
         raise Exception(400, e)
 
 
-def append_user_to_default_pool(cursor, organisation_id, user_id):
+def append_user_to_default_pool(cursor, organisation_id, user_id, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append user to all org pools...")
         # SQL query to find top level pool and assign to everyone under it
@@ -178,6 +254,28 @@ def append_user_to_default_pool(cursor, organisation_id, user_id):
         """
         
         cursor.execute(sql, (user_id,organisation_id,))
+
+        get_entry = f"""
+                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} a 
+                        JOIN {database_dict['schema']}.{database_dict['pools_table']} b 
+                        ON a.poolid = b.poolid AND b.parentid is NULL AND b.organisationid = %s
+                        LIMIT 1
+        """
+        cursor.execute(get_entry, (organisation_id, user_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_users_table'], 3, user_id, sql,
+            '{}', current_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
     
     except Exception as e:
         logging.error(f"Error adding user to pool: {e}")
@@ -214,16 +312,14 @@ def lambda_handler(event, context):
         
         with conn.cursor() as cursor:
 
-            login_user_result = get_user_and_hub_id_by_email(cursor, user_email)
-            login_user_id = login_user_result[0]
-            login_user_hub = login_user_result[1]
+            login_user_id, login_user_hub, user_uuid = get_user_and_hub_id_by_email(cursor, user_email)
 
-            org_invite_details = join_organisation(cursor,invite_code,login_user_id, login_user_hub)
+            org_invite_details, org_uuid = join_organisation(cursor,invite_code,login_user_id, login_user_hub)
             
             if(login_user_hub == 1): #if new user is hub add user to all pools (for hub get org details )
-                append_user_to_all_pools(cursor,org_invite_details[0],login_user_id)
+                append_user_to_all_pools(cursor,org_invite_details[0],login_user_id, org_uuid, user_uuid)
             else:
-                append_user_to_default_pool(cursor,org_invite_details[0],login_user_id)
+                append_user_to_default_pool(cursor,org_invite_details[0],login_user_id, org_uuid,user_uuid)
             
             configure_mqtt(cursor,login_user_id, user_identity, org_invite_details[0])
 

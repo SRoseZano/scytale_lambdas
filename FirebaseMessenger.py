@@ -6,7 +6,7 @@ import zanolambdashelper
 from firebase_admin import credentials, messaging
 import os
 
-firebase_credentials = zanolambdashelper.helpers.get_firebase_credss()
+firebase_credentials = zanolambdashelper.helpers.get_firebase_creds()
 
 if not firebase_admin._apps:
             cred = credentials.Certificate(firebase_credentials)  # Update the path

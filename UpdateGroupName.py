@@ -26,12 +26,40 @@ rds_client =  zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_pool(cursor, organisation_id, pool_name, pool_id):
+def rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid):
     try:
+        get_entry = f"""
+                                           SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']}
+                                           WHERE organisationid = %s AND poolid = %s;
+                           """
+        cursor.execute(get_entry, (organisation_id, pool_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Creating pool...")
         sql = f"UPDATE {database_dict['schema']}.{database_dict['pools_table']} SET pool_name = %s WHERE organisationid = %s AND poolid = %s "
        
         cursor.execute(sql, (pool_name, organisation_id, pool_id))
+
+        cursor.execute(get_entry, (organisation_id, pool_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_table'], 3, user_id, sql,
+            historic_row_json, current_row_json, org_uuid, user_uuid)
+
     except Exception as e:
         logging.error(f"Error updating pool name: {e}")
         traceback.print_exc()
@@ -69,8 +97,8 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             print(organisation_id)
             
             print(database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
@@ -78,7 +106,7 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, pool_id)
         
-            rename_pool(cursor, organisation_id, pool_name, pool_id)
+            rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid)
             conn.commit()
             
     except Exception as e:

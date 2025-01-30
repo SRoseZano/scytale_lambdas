@@ -75,8 +75,22 @@ def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisatio
         print(target_user_permissions[0])
         raise Exception(402, "Cannot remove a user of same permission status from group, please demote user first")
 
-def remove_user_from_pool(cursor, pool_id, user_id):
+def remove_user_from_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
     try:
+
+        get_entry = f"""
+                             SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
+                             WHERE userid = %s;
+             """
+        cursor.execute(get_entry, (user_id, organisation_id,))
+        last_inserted_row = cursor.fetchall()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Executing SQL query to append device to pool:")
         logging.info(pool_id)
         # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
@@ -97,6 +111,11 @@ def remove_user_from_pool(cursor, pool_id, user_id):
             """
         
         cursor.execute(sql, (pool_id, user_id))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_users_table'], 2, user_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid)
     
     except Exception as e:
         logging.error(f"Error removing user from pool: {e}")
@@ -133,8 +152,8 @@ def lambda_handler(event, context):
         pool_id = variables['pool_id']['value']
     
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
@@ -142,7 +161,7 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, pool_id)
             
             has_permissions_to_remove_target(cursor,login_user_id, user_id,organisation_id)
-            remove_user_from_pool(cursor, pool_id, user_id)
+            remove_user_from_pool(cursor, pool_id, user_id, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

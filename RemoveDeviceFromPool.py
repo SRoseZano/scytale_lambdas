@@ -24,8 +24,23 @@ database_dict = zanolambdashelper.helpers.get_database_dict()
 rds_client =  zanolambdashelper.helpers.create_client('rds') 
 
 
-def delete_device_from_pool(cursor,pool_id, device_id):
+def delete_device_from_pool(cursor,pool_id, device_id, org_uuid, user_uuid):
     try:
+
+        get_entry = f"""
+                                                      SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
+                                                      WHERE deviceid = %s and poolid = %s;
+                                      """
+        cursor.execute(get_entry, (device_id, pool_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+
         logging.info("Deleting device from pool...")
         sql = f"""  
             DELETE FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
@@ -43,6 +58,12 @@ def delete_device_from_pool(cursor,pool_id, device_id):
             ) AND deviceid = %s;
         """
         cursor.execute(sql, (pool_id, device_id))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_devices_table'], 2, device_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid)
+
     except Exception as e:
         logging.error(f"Error deleting device from pool: {e}")
         traceback.print_exc()
@@ -79,11 +100,11 @@ def lambda_handler(event, context):
         device_id = variables['device_id']['value']
 
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_device_in_org(cursor,database_dict['schema'],database_dict['devices_table'], organisation_id, device_id)
-            print(pool_id, organisation_id)
+
             zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, pool_id)
             
             delete_device_from_pool(cursor,  pool_id, device_id)

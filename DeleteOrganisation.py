@@ -61,11 +61,32 @@ def get_associated_policy(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def delete_organisation(cursor, organisation_id):
+def delete_organisation(cursor, organisation_id, org_uuid, user_uuid):
+
     try:
+        get_historic_entry = f"""
+                                      SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']} 
+                                      WHERE organisationID = %s LIMIT 1
+                                  """
+        cursor.execute(get_historic_entry, (organisation_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
         logging.info("Deleting organisation...")
         sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationid = %s"
         cursor.execute(sql, (organisation_id,))
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['organisations_table'], 2, organisation_id, sql,
+            historic_row_json, '{}', org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
         logging.info("Organisation deleted successfully.")
     
     except Exception as e:
@@ -132,15 +153,15 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
 
             user_identities = get_user_identities(cursor,  organisation_id)
             policy_name = get_associated_policy(cursor,organisation_id)
-            delete_organisation(cursor, organisation_id)
+            delete_organisation(cursor, organisation_id, org_uuid, user_uuid)
             detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, user_identities)
             delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name)
 

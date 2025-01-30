@@ -54,7 +54,7 @@ def get_default_pool_id(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def create_device(cursor, long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id):
+def create_device(cursor, long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id, org_uuid, user_uuid):
     try:
         logging.info("Creating device entry...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationid) \
@@ -65,6 +65,25 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
         sql_fetch_last_id = "SELECT LAST_INSERT_ID();"
         cursor.execute(sql_fetch_last_id)
         device_id = cursor.fetchone()[0]
+
+        get_entry = f"""
+                        SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
+                        WHERE deviceid = %s;
+        """
+        cursor.execute(get_entry, (device_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['devices_table'], 3, organisation_id, sql,
+            '{}', current_row_json, org_uuid, user_uuid
+        )
         
         return device_id
     except Exception as e:
@@ -73,11 +92,31 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
         raise Exception(400, e) from e
 
 
-def add_device_to_default_pool(cursor, pool_id, device_id):
+def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
     try:
         logging.info("Adding device to default pool...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolid, deviceid) VALUES (%s, %s)"
         cursor.execute(sql, (pool_id, device_id))
+
+        get_entry = f"""
+                                SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
+                                WHERE deviceid = %s and poolid = %s;
+                """
+        cursor.execute(get_entry, (device_id,pool_id,))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_devices_table'], 3, organisation_id, sql,
+            '{}', current_row_json, org_uuid, user_uuid
+        )
+
     except Exception as e:
         logging.error(f"Error adding device to default pool: {e}")
         traceback.print_exc()
@@ -135,8 +174,8 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
 
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
@@ -149,7 +188,7 @@ def lambda_handler(event, context):
             default_pool_id = get_default_pool_id(cursor,organisation_id)
             device_id = create_device(cursor, long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id)
             pool_id = get_default_pool_id(cursor, organisation_id)
-            add_device_to_default_pool(cursor, pool_id, device_id)
+            add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid)
             device_topic = gather_device_uuid(cursor, device_id)
             conn.commit()
 

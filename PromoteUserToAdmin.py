@@ -27,7 +27,7 @@ rds_client =  zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def append_user_to_all_pools(cursor, organisation_id, user_id):
+def append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append user to all org pools...")
         # SQL query to find top level pool and assign to everyone under it
@@ -57,14 +57,48 @@ def append_user_to_all_pools(cursor, organisation_id, user_id):
         """
         print(sql, (organisation_id, user_id, user_id))
         cursor.execute(sql, (organisation_id, user_id, user_id))
+
+        get_current_entry = f"""
+                                SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
+                                WHERE poolID = %s AND userid = %s 
+                            """
+        cursor.execute(get_current_entry, (pool_id, user_id))
+        last_inserted_row = cursor.fetchall()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_users_table'], 3, user_id, sql,
+            '{}', current_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
     
     except Exception as e:
         logging.error(f"Error adding user to pool: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
-def promote_user_to_admin(cursor, organisation_id, user_id):
+def promote_user_to_admin(cursor, organisation_id, user_id,  org_uuid, user_uuid):
     try:
+
+        get_entry = f"""
+                    SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
+                    WHERE organisationID = %s AND userID = %s;
+
+        """
+        cursor.execute(get_entry, (organisation_id, user_id))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
         logging.info("Executing SQL query promote user to admin")
         
         sql = f"""
@@ -74,6 +108,22 @@ def promote_user_to_admin(cursor, organisation_id, user_id):
 
         """
         cursor.execute(sql, (organisation_id, user_id))
+
+        cursor.execute(get_entry, (organisation_id, user_id))
+        last_inserted_row = cursor.fetchone()
+        if last_inserted_row:
+            colnames = [desc[0] for desc in cursor.description]
+            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        else:
+            logging.error("No row found before update for audit logs.")
+            raise ValueError("Inital row not found for audit log.")
+
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['pools_table'], 1, organisation_id, sql,
+            historic_row_json, current_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
     
     except Exception as e:
         logging.error(f"Error promoting user to admin: {e}")
@@ -108,14 +158,14 @@ def lambda_handler(event, context):
         
 
         with conn.cursor() as cursor:
-            login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
             
             #validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
             zanolambdashelper.helpers.is_target_user_in_org(cursor,database_dict['schema'],database_dict['users_organisations_table'], organisation_id, user_id)
-            append_user_to_all_pools(cursor, organisation_id, user_id)
-            promote_user_to_admin(cursor, organisation_id, user_id)
+            append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uuid)
+            promote_user_to_admin(cursor, organisation_id, user_id, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:
