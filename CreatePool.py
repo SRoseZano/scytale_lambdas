@@ -21,11 +21,12 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
 max_pool_count = 100
+
 
 def count_pools(cursor, organisation_id):
     try:
@@ -38,15 +39,17 @@ def count_pools(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def create_pool(cursor, organisation_id, pool_name, parent_id, org_uuid, user_uuid):
     try:
         logging.info("Creating pool...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (organisationid, pool_name, parentid) VALUES (%s, %s, %s)"
         cursor.execute(sql, (organisation_id, pool_name, parent_id))
+        sql_audit = sql % (organisation_id, pool_name, parent_id)
 
         # Fetch the last inserted ID
         try:
-            pool_id = zanolambdashelper.helpers.get_last_inserted_row()
+            pool_id = zanolambdashelper.helpers.get_last_inserted_row(cursor)
             if not pool_id:
                 raise ValueError("No pool ID returned after insertion.")
             logging.info(f"Default pool created with ID: {pool_id}")
@@ -70,7 +73,7 @@ def create_pool(cursor, organisation_id, pool_name, parent_id, org_uuid, user_uu
 
                 zanolambdashelper.helpers.submit_to_audit_log(
                     cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_table'], 3, pool_id, sql,
+                    database_dict['pools_table'], 3, pool_id, sql_audit,
                     '{}', inserted_row_json, org_uuid, user_uuid
                 )
                 logging.info("Audit log submitted successfully.")
@@ -81,21 +84,12 @@ def create_pool(cursor, organisation_id, pool_name, parent_id, org_uuid, user_uu
             logging.error(f"Error creating audit log: {e}")
             traceback.print_exc()
             raise  # Re-raise to propagate to the outer block
+        return pool_id
     except Exception as e:
         logging.error(f"Error inserting pool: {e}")
         traceback.print_exc()
         raise Exception(400, e)
-        
 
-def fetch_last_inserted_id(cursor):
-    try:
-        logging.info("Getting newly created poolid...")
-        cursor.execute("SELECT LAST_INSERT_ID();")
-        return cursor.fetchone()[0]
-    except Exception as e:
-        logging.error(f"Error fetching last inserted ID: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
 
 def inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, org_uuid, user_uuid):
     try:
@@ -105,18 +99,18 @@ def inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, or
         FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
         JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b
         ON a.userid = b.userid AND b.permissionid = 1 AND a.poolid = %s
-        
+
         UNION
-        
+
         SELECT %s, a.userid 
         FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
         JOIN {database_dict['schema']}.{database_dict['pools_table']} b
         ON a.poolid = b.poolid AND b.parentid IS NOT NULL AND a.poolid = %s
-        
+
         """
         cursor.execute(sql, (pool_id, parent_id, pool_id, parent_id))
 
-
+        sql_audit = sql % (pool_id, parent_id, pool_id, parent_id)
 
         # Step 2: Create audit log
         try:
@@ -133,7 +127,7 @@ def inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, or
 
                 zanolambdashelper.helpers.submit_to_audit_log(
                     cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_id, sql,
+                    database_dict['pools_users_table'], 3, pool_id, sql_audit,
                     '{}', inserted_row_json, org_uuid, user_uuid
                 )
                 logging.info("Audit log submitted successfully.")
@@ -149,8 +143,9 @@ def inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, or
         logging.error(f"Error inserting users of parent pool into new pool: {e}")
         traceback.print_exc()
         raise Exception(400, e)
-        
-def gather_pool_uuid(cursor,pool_id):
+
+
+def gather_pool_uuid(cursor, pool_id):
     try:
         logging.info("Gathering topic from pool...")
         sql = f"SELECT poolUUID FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE poolid = %s"
@@ -164,57 +159,64 @@ def gather_pool_uuid(cursor,pool_id):
 
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-
         pool_name_raw = body_json.get('pool_name')
         parent_id_raw = body_json.get('parent_id')
-        
 
         variables = {
             'pool_name': {'value': pool_name_raw['value'], 'value_type': pool_name_raw['value_type']},
             'parent_id': {'value': parent_id_raw['value'], 'value_type': parent_id_raw['value_type']},
         }
-        
-        
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         pool_name = variables['pool_name']['value']
         parent_id = variables['parent_id']['value']
 
         with conn.cursor() as cursor:
-            
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+                                                                                           database_dict['schema'],
+                                                                                           database_dict['users_table'],
+                                                                                           user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+                                                                                                database_dict['schema'],
+                                                                                                database_dict[
+                                                                                                    'users_organisations_table'],
+                                                                                                login_user_id)
             print(organisation_id)
-            
+
             print(database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
-            #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
-            zanolambdashelper.helpers.is_target_pool_in_org(cursor,database_dict['schema'],database_dict['pools_table'], organisation_id, parent_id)
-            
+            # validate precursors to running this command
+            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], login_user_id,
+                                                        organisation_id)
+            zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
+                                                            database_dict['pools_table'], organisation_id, parent_id)
+
             pool_count = count_pools(cursor, organisation_id)
-            if pool_count + 1 > max_pool_count: #if pool count with new pool is greater max then raise custom exception
+            if pool_count + 1 > max_pool_count:  # if pool count with new pool is greater max then raise custom exception
                 logging.error("Org is at group limit...")
                 raise Exception(403, f"You have reached your organisations group limit of {max_pool_count}")
-            create_pool(cursor, organisation_id, pool_name, parent_id, org_uuid, user_uuid)
-            pool_id = fetch_last_inserted_id(cursor)
+            pool_id = create_pool(cursor, organisation_id, pool_name, parent_id, org_uuid, user_uuid)
             inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, org_uuid, user_uuid)
             pool_topic = gather_pool_uuid(cursor, pool_id)
             conn.commit()
-            
+
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422 or status_value == 403: # if 422 then validation 
+        if status_value == 422 or status_value == 403:  # if 422 then validation
             body_value = e.args[1]
         else:
             body_value = 'Unable to create pool'
@@ -223,7 +225,7 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

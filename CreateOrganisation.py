@@ -11,7 +11,6 @@ import random
 import string
 import zanolambdashelper
 
-
 database_details = zanolambdashelper.helpers.get_db_details()
 
 rds_host = database_details['rds_host']
@@ -22,7 +21,7 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 zanolambdashelper.helpers.set_logging('INFO')
@@ -44,7 +43,8 @@ def is_in_org(cursor, schema, user_organisations_intersect_table, login_user_id)
         raise Exception(400, e)
 
 
-def create_organisation(cursor, organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number,userUUID):
+def create_organisation(cursor, organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number,
+                        userUUID):
     try:
         logging.info("Creating Organisation...")
 
@@ -55,7 +55,11 @@ def create_organisation(cursor, organisation_name, address_line_1, address_line_
                 (organisation_name, associated_policy, address_line_1, address_line_2, city, county, postcode, phone_no) 
                 VALUES (%s, CONCAT('Policy_', UUID()), %s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number))
+            cursor.execute(sql,
+                           (organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number))
+
+            sql_audit = sql % (organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number)
+
             logging.info("Organisation entry created successfully.")
         except Exception as e:
             logging.error(f"Error executing SQL to create organisation entry: {e}")
@@ -64,7 +68,7 @@ def create_organisation(cursor, organisation_name, address_line_1, address_line_
 
         # Step 2: Fetch the last inserted ID
         try:
-            organisation_id = zanolambdashelper.helpers.get_last_inserted_row()
+            organisation_id = zanolambdashelper.helpers.get_last_inserted_row(cursor)
             if not organisation_id:
                 raise ValueError("No organisation ID returned after insertion.")
             logging.info(f"Organisation created with ID: {organisation_id}")
@@ -76,20 +80,19 @@ def create_organisation(cursor, organisation_name, address_line_1, address_line_
         # Step 3: Create audit log
         try:
             get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']} 
-                                       WHERE id = %s LIMIT 1"""
+                                       WHERE organisationid = %s LIMIT 1"""
             cursor.execute(get_inserted_row_sql, (organisation_id,))
             last_inserted_row = cursor.fetchone()
             if last_inserted_row:
                 colnames = [desc[0] for desc in cursor.description]
-                row_dict = dict(zip(col_names, last_inserted_row))
+                row_dict = dict(zip(colnames, last_inserted_row))
                 orgUUID = row_dict['organisationUUID']
                 inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
                 # Submit to audit log
                 try:
                     zanolambdashelper.helpers.submit_to_audit_log(
                         cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['organisations_table'], 3, organisation_id, sql,
+                        database_dict['organisations_table'], 3, organisation_id, sql_audit,
                         '{}', inserted_row_json, orgUUID, userUUID
                     )
                     logging.info("Audit log submitted successfully.")
@@ -127,6 +130,8 @@ def create_user_organisation_relation(cursor, login_user_id, organisation_id, or
                 VALUES (%s, %s, 1);
             """
             cursor.execute(sql, (login_user_id, organisation_id))
+
+            sql_audit = sql % (login_user_id, organisation_id)
             logging.info("User organisation relation created successfully.")
         except Exception as e:
             logging.error(f"Error executing SQL to create user organisation relation: {e}")
@@ -139,7 +144,7 @@ def create_user_organisation_relation(cursor, login_user_id, organisation_id, or
                 SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']} 
                 WHERE userid = %s AND organisationid = %s LIMIT 1
             """
-            cursor.execute(get_inserted_row_sql, (login_user_id, organisation_id))
+            cursor.execute(get_inserted_row_sql, (login_user_id, organisation_id,))
             last_inserted_row = cursor.fetchone()
             if last_inserted_row:
                 colnames = [desc[0] for desc in cursor.description]
@@ -149,7 +154,7 @@ def create_user_organisation_relation(cursor, login_user_id, organisation_id, or
                 try:
                     zanolambdashelper.helpers.submit_to_audit_log(
                         cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['users_organisations_table'], 3, organisation_id, sql,
+                        database_dict['users_organisations_table'], 3, organisation_id, sql_audit,
                         '{}', inserted_row_json, org_UUID, userUUID
                     )
                     logging.info("Audit log submitted successfully.")
@@ -184,6 +189,7 @@ def create_default_pool(cursor, organisation_id, organisation_name, org_uuid, us
                 VALUES (%s, %s, NULL)
             """
             cursor.execute(sql, (organisation_id, f"{organisation_name} Default Pool"))
+            sql_audit = sql % (organisation_id, f"{organisation_name} Default Pool")
             logging.info("Default pool entry created successfully.")
         except Exception as e:
             logging.error(f"Error executing SQL to create default pool: {e}")
@@ -192,7 +198,7 @@ def create_default_pool(cursor, organisation_id, organisation_name, org_uuid, us
 
         # Step 2: Fetch the last inserted ID
         try:
-            pool_id = zanolambdashelper.helpers.get_last_inserted_row()
+            pool_id = zanolambdashelper.helpers.get_last_inserted_row(cursor)
             if not pool_id:
                 raise ValueError("No pool ID returned after insertion.")
             logging.info(f"Default pool created with ID: {pool_id}")
@@ -205,7 +211,7 @@ def create_default_pool(cursor, organisation_id, organisation_name, org_uuid, us
         try:
             get_inserted_row_sql = f"""
                 SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']} 
-                WHERE id = %s LIMIT 1
+                WHERE poolid = %s LIMIT 1
             """
             cursor.execute(get_inserted_row_sql, (pool_id,))
             last_inserted_row = cursor.fetchone()
@@ -217,7 +223,7 @@ def create_default_pool(cursor, organisation_id, organisation_name, org_uuid, us
                 try:
                     zanolambdashelper.helpers.submit_to_audit_log(
                         cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['pools_table'], 3, pool_id, sql,
+                        database_dict['pools_table'], 3, pool_id, sql_audit,
                         '{}', inserted_row_json, org_uuid, user_uuid
                     )
                     logging.info("Audit log submitted successfully.")
@@ -242,6 +248,7 @@ def create_default_pool(cursor, organisation_id, organisation_name, org_uuid, us
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def add_user_to_pool(cursor, pool_id, login_user_id, org_uuid, user_uuid):
     logging.info("Adding user to newly created default pool...")
     try:
@@ -252,6 +259,7 @@ def add_user_to_pool(cursor, pool_id, login_user_id, org_uuid, user_uuid):
             VALUES (%s, %s);
         """
         cursor.execute(sql, (pool_id, login_user_id))
+        sql_audit = sql % (pool_id, login_user_id)
         logging.info("User added to pool successfully.")
 
         # Step 2: Create audit log
@@ -269,7 +277,7 @@ def add_user_to_pool(cursor, pool_id, login_user_id, org_uuid, user_uuid):
 
                 zanolambdashelper.helpers.submit_to_audit_log(
                     cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_id, sql,
+                    database_dict['pools_users_table'], 3, pool_id, sql_audit,
                     '{}', inserted_row_json, org_uuid, user_uuid
                 )
                 logging.info("Audit log submitted successfully.")
@@ -285,7 +293,6 @@ def add_user_to_pool(cursor, pool_id, login_user_id, org_uuid, user_uuid):
         logging.error(f"Error adding user to pool: {e}")
         traceback.print_exc()
         raise Exception(400, e)
-
 
 
 def update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, user_uuid):
@@ -313,6 +320,7 @@ def update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, us
             WHERE userID = %s
         """
         cursor.execute(sql, (user_identity, login_user_id))
+        sql_audit = sql % (user_identity, login_user_id)
         logging.info("User identity pool updated successfully.")
 
         # Step 2: Create audit log
@@ -327,10 +335,9 @@ def update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, us
             if last_inserted_row:
                 colnames = [desc[0] for desc in cursor.description]
                 updated_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
                 zanolambdashelper.helpers.submit_to_audit_log(
                     cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['users_table'], 1, login_user_id, sql,
+                    database_dict['users_table'], 1, login_user_id, sql_audit,
                     historic_row_json, updated_row_json, org_uuid, user_uuid
                 )
                 logging.info("Audit log submitted successfully.")
@@ -348,8 +355,8 @@ def update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, us
         raise Exception(400, e)
 
 
-
-def create_and_attach_policy(cursor, organisation_id, organisation_name, policy_creation_lambda, policy_attach_lambda, user_identity):
+def create_and_attach_policy(cursor, organisation_id, organisation_name, policy_creation_lambda, policy_attach_lambda,
+                             user_identity):
     try:
         logging.info("Creating and Attatching IoT policy to organisation...")
         # Fetch associated policy and organisation UUID
@@ -376,7 +383,6 @@ def create_and_attach_policy(cursor, organisation_id, organisation_name, policy_
             traceback.print_exc()
             raise Exception(400, {response_payload})
 
-
         # Run policy attach lambda
         response = lambda_client.invoke(
             FunctionName=policy_attach_lambda,
@@ -402,9 +408,10 @@ def create_and_attach_policy(cursor, organisation_id, organisation_name, policy_
 
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
@@ -420,9 +427,10 @@ def lambda_handler(event, context):
         postcode_raw = body_json.get('postcode')
         phone_number_raw = body_json.get('phone_number')
         user_identity_raw = body_json.get('user_identity')
-        
+
         variables = {
-            'organisation_name': {'value': organisation_name_raw['value'], 'value_type': organisation_name_raw['value_type']},
+            'organisation_name': {'value': organisation_name_raw['value'],
+                                  'value_type': organisation_name_raw['value_type']},
             'address_line_1': {'value': address_line_1_raw['value'], 'value_type': address_line_1_raw['value_type']},
             'city': {'value': city_raw['value'], 'value_type': city_raw['value_type']},
             'county': {'value': county_raw['value'], 'value_type': county_raw['value_type']},
@@ -430,12 +438,13 @@ def lambda_handler(event, context):
             'phone_number': {'value': phone_number_raw['value'], 'value_type': phone_number_raw['value_type']},
             'user_identity': {'value': user_identity_raw['value'], 'value_type': user_identity_raw['value_type']}
         }
-        
-        if address_line_2_raw['value']: #add optionals if exists
-            variables['address_line_2'] = {'value': address_line_2_raw['value'], 'value_type': address_line_2_raw['value_type']}
-        
+
+        if address_line_2_raw['value']:  # add optionals if exists
+            variables['address_line_2'] = {'value': address_line_2_raw['value'],
+                                           'value_type': address_line_2_raw['value_type']}
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         organisation_name = variables['organisation_name']['value']
         address_line_1 = variables['address_line_1']['value']
@@ -446,33 +455,38 @@ def lambda_handler(event, context):
         phone_number = variables['phone_number']['value']
         user_identity = variables['user_identity']['value']
 
-
         with conn.cursor() as cursor:
-            login_user_id, userUUID = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            
-            if not is_in_org(cursor, database_dict['schema'], database_dict['users_organisations_table'], login_user_id):
-                
+            login_user_id, userUUID = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+                                                                                          database_dict['schema'],
+                                                                                          database_dict['users_table'],
+                                                                                          user_email)
+
+            if not is_in_org(cursor, database_dict['schema'], database_dict['users_organisations_table'],
+                             login_user_id):
+
                 # Create organisation entry in database
-                organisation_id, org_uuid = create_organisation(cursor, organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number, userUUID)
+                organisation_id, org_uuid = create_organisation(cursor, organisation_name, address_line_1,
+                                                                address_line_2, city, county, postcode, phone_number,
+                                                                userUUID)
 
                 # Create user_organisations entry in database
                 create_user_organisation_relation(cursor, login_user_id, organisation_id, org_uuid, userUUID)
 
                 # Create default pool entry in database
-                pool_id = create_default_pool(cursor, organisation_id, organisation_name,org_uuid, userUUID)
+                pool_id = create_default_pool(cursor, organisation_id, organisation_name, org_uuid, userUUID)
 
                 # Add user to pool
-                add_user_to_pool(cursor, pool_id, login_user_id,org_uuid, userUUID)
+                add_user_to_pool(cursor, pool_id, login_user_id, org_uuid, userUUID)
 
                 # Update user identity pool
-                update_user_identity_pool(cursor, user_identity, login_user_id,org_uuid, userUUID)
+                update_user_identity_pool(cursor, user_identity, login_user_id, org_uuid, userUUID)
 
                 # Create and attach policy
-                create_and_attach_policy(cursor, organisation_id, organisation_name, policy_creation_lambda, policy_attach_lambda, user_identity)
-
+                create_and_attach_policy(cursor, organisation_id, organisation_name, policy_creation_lambda,
+                                         policy_attach_lambda, user_identity)
 
                 conn.commit()
-    
+
             else:
                 traceback.print_exc()
                 raise Exception(400)
@@ -481,7 +495,7 @@ def lambda_handler(event, context):
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422: # if 422 then validation 
+        if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
             body_value = 'Unable to create organisation'
@@ -490,14 +504,13 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()
             conn.close()
         except NameError:  # catch potential error before cursor or conn is defined
             pass
-
 
     return {
         'statusCode': 200,

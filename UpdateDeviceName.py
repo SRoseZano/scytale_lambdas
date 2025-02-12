@@ -21,12 +21,12 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_device(cursor, organisation_id, device_name, device_id):
+def rename_device(cursor, organisation_id, device_name, device_id, org_uuid, user_uuid):
     try:
 
         get_entry = f"""
@@ -46,6 +46,8 @@ def rename_device(cursor, organisation_id, device_name, device_id):
         sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET device_name = %s WHERE organisationid = %s AND deviceid = %s "
         cursor.execute(sql, (device_name, organisation_id, device_id,))
 
+        sql_audit = sql % (device_name, organisation_id, device_id,)
+
         cursor.execute(get_entry, (organisation_id, device_id,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
@@ -57,7 +59,7 @@ def rename_device(cursor, organisation_id, device_name, device_id):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, user_id, sql,
+            database_dict['devices_table'], 3, device_id, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
 
@@ -65,53 +67,61 @@ def rename_device(cursor, organisation_id, device_name, device_id):
         logging.error(f"Error updating device name: {e}")
         traceback.print_exc()
         raise Exception(400, e)
-        
+
 
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-
         device_name_raw = body_json.get('device_name')
         device_id_raw = body_json.get('device_id')
-        
 
         variables = {
             'device_name': {'value': device_name_raw['value'], 'value_type': device_name_raw['value_type']},
             'device_id': {'value': device_id_raw['value'], 'value_type': device_id_raw['value_type']},
         }
-        
-        
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         device_name = variables['device_name']['value']
         device_id = variables['device_id']['value']
 
         with conn.cursor() as cursor:
-            
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
-            
 
-            #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
-            zanolambdashelper.helpers.is_target_device_in_org(cursor,database_dict['schema'],database_dict['devices_table'], organisation_id, device_id)
-        
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+                                                                                           database_dict['schema'],
+                                                                                           database_dict['users_table'],
+                                                                                           user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+                                                                                                database_dict['schema'],
+                                                                                                database_dict[
+                                                                                                    'users_organisations_table'],
+                                                                                                login_user_id)
+
+            # validate precursors to running this command
+            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], login_user_id,
+                                                        organisation_id)
+            zanolambdashelper.helpers.is_target_device_in_org(cursor, database_dict['schema'],
+                                                              database_dict['devices_table'], organisation_id,
+                                                              device_id)
+
             rename_device(cursor, organisation_id, device_name, device_id, org_uuid, user_uuid)
             conn.commit()
-            
+
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422: # if 422 then validation 
+        if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
             body_value = 'Unable to update device name'
@@ -120,7 +130,7 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

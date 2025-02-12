@@ -99,6 +99,7 @@ def lambda_handler(event, context):
                 locale VARCHAR(20) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 hub_user BOOL NOT NULL DEFAULT 0,
+                hubUUID VARCHAR(36), 
                 UNIQUE (userUUID),
                 INDEX (email),
                 INDEX (userUUID)

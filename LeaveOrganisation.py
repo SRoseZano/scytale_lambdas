@@ -84,9 +84,11 @@ def remove_user_from_organisation(cursor, organisation_id,user_id, org_uuid, use
             """
         cursor.execute(sql, (user_id, organisation_id))
 
+        sql_audit = sql % (user_id, organisation_id)
+
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 2, user_id, sql,
+            database_dict['users_organisations_table'], 2, user_id, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
@@ -113,9 +115,11 @@ def remove_user_from_organisation(cursor, organisation_id,user_id, org_uuid, use
             """
         cursor.execute(sql, (user_id, organisation_id))
 
+        sql_audit = sql % (user_id, organisation_id)
+
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 2, user_id, sql,
+            database_dict['pools_users_table'], 2, user_id, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")

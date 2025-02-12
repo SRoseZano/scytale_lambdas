@@ -26,13 +26,13 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid):
+def rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid):
     try:
         get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']}
-                                           WHERE organisationid = %s AND poolid = %s;
+                                           SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
+                                           WHERE organisationid = %s AND hubid = %s;
                            """
-        cursor.execute(get_entry, (organisation_id, pool_id,))
+        cursor.execute(get_entry, (organisation_id, hub_id,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -42,13 +42,13 @@ def rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['pools_table']} SET pool_name = %s WHERE organisationid = %s AND poolid = %s "
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationid = %s AND hubid = %s "
 
-        cursor.execute(sql, (pool_name, organisation_id, pool_id))
+        cursor.execute(sql, (hub_name, organisation_id, hub_id))
 
-        sql_audit = sql % (pool_name, organisation_id, pool_id)
+        sql_audit = sql % (hub_name, organisation_id, hub_id)
 
-        cursor.execute(get_entry, (organisation_id, pool_id,))
+        cursor.execute(get_entry, (organisation_id, hub_id,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -59,7 +59,7 @@ def rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_table'], 3, pool_id, sql_audit,
+            database_dict['hubs_table'], 3, hub_id, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
     except Exception as e:
@@ -80,21 +80,19 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        print(user_email)
-
-        pool_name_raw = body_json.get('pool_name')
-        pool_id_raw = body_json.get('pool_id')
+        hub_name_raw = body_json.get('hub_name')
+        hub_id_raw = body_json.get('hub_id')
 
         variables = {
-            'pool_name': {'value': pool_name_raw['value'], 'value_type': pool_name_raw['value_type']},
-            'pool_id': {'value': pool_id_raw['value'], 'value_type': pool_id_raw['value_type']},
+            'hub_name': {'value': hub_name_raw['value'], 'value_type': hub_name_raw['value_type']},
+            'hub_id': {'value': hub_id_raw['value'], 'value_type': hub_id_raw['value_type']},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        pool_name = variables['pool_name']['value']
-        pool_id = variables['pool_id']['value']
+        hub_name = variables['hub_name']['value']
+        hub_id = variables['hub_id']['value']
 
         with conn.cursor() as cursor:
 
@@ -114,10 +112,10 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], login_user_id,
                                                         organisation_id)
-            zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
-                                                            database_dict['pools_table'], organisation_id, pool_id)
+            zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
+                                                            database_dict['hubs_table'], organisation_id, hub_id)
 
-            rename_pool(cursor, organisation_id, pool_name, pool_id, org_uuid, user_uuid)
+            rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:
@@ -126,7 +124,7 @@ def lambda_handler(event, context):
         if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
-            body_value = 'Unable to update pool name'
+            body_value = 'Unable to update hub name'
         error_response = {
             'statusCode': status_value,
             'body': body_value,
@@ -142,5 +140,5 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'Pool Name Updated Successfully',
+        'body': 'Hub Name Updated Successfully',
     }

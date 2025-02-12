@@ -21,7 +21,7 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
@@ -39,6 +39,7 @@ def get_org_device_count(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def get_default_pool_id(cursor, organisation_id):
     try:
         logging.info("Fetching default pool ID...")
@@ -54,13 +55,19 @@ def get_default_pool_id(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def create_device(cursor, long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id, org_uuid, user_uuid):
+
+def create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email, device_name,
+                  organisation_id, org_uuid, user_uuid):
     try:
         logging.info("Creating device entry...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationid) \
                 VALUES (%s, %s, %s, %s,%s, %s, %s)"
-        cursor.execute(sql, (long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id))
-        
+        cursor.execute(sql, (
+        long_address, short_address, device_type_id, associated_hub, user_email, device_name, organisation_id))
+
+        sql_audit = sql % (
+        long_address, short_address, device_type_id, associated_hub, user_email, device_name, organisation_id)
+
         # Fetch the ID of the newly inserted device
         sql_fetch_last_id = "SELECT LAST_INSERT_ID();"
         cursor.execute(sql_fetch_last_id)
@@ -81,10 +88,10 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, organisation_id, sql,
+            database_dict['devices_table'], 3, organisation_id, sql_audit,
             '{}', current_row_json, org_uuid, user_uuid
         )
-        
+
         return device_id
     except Exception as e:
         logging.error(f"Error creating device entry: {e}")
@@ -97,12 +104,13 @@ def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
         logging.info("Adding device to default pool...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolid, deviceid) VALUES (%s, %s)"
         cursor.execute(sql, (pool_id, device_id))
+        sql_audit = sql % (pool_id, device_id)
 
         get_entry = f"""
-                                SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
-                                WHERE deviceid = %s and poolid = %s;
+                    SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
+                    WHERE deviceid = %s and poolid = %s;
                 """
-        cursor.execute(get_entry, (device_id,pool_id,))
+        cursor.execute(get_entry, (device_id, pool_id,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -113,7 +121,7 @@ def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_devices_table'], 3, organisation_id, sql,
+            database_dict['pools_devices_table'], 3, pool_id, sql_audit,
             '{}', current_row_json, org_uuid, user_uuid
         )
 
@@ -121,8 +129,9 @@ def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
         logging.error(f"Error adding device to default pool: {e}")
         traceback.print_exc()
         raise Exception(400, e)
-        
-def gather_device_uuid(cursor,device_id):
+
+
+def gather_device_uuid(cursor, device_id):
     try:
         logging.info("Gathering topic from device...")
         sql = f"SELECT deviceUUID FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE deviceid = %s"
@@ -134,27 +143,26 @@ def gather_device_uuid(cursor,device_id):
         raise Exception(400, e)
 
 
-
-
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
-        conn.autocommit = False 
-    
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
+        conn.autocommit = False
+
         auth_token = event['params']['header']['Authorization']
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
-    
+
         # Extract relevant attributes if non existant set empty
-    
+
         device_name_raw = body_json.get('device_name')
         long_address_raw = body_json.get('long_address')
         short_address_raw = body_json.get('short_address')
         device_type_id_raw = body_json.get('device_type_id')
-        associated_hub_raw =  body_json.get('associated_hub')
-    
+        associated_hub_raw = body_json.get('associated_hub')
+
         variables = {
             'device_name': {'value': device_name_raw['value'], 'value_type': device_name_raw['value_type']},
             'long_address': {'value': long_address_raw['value'], 'value_type': long_address_raw['value_type']},
@@ -162,9 +170,9 @@ def lambda_handler(event, context):
             'device_type_id': {'value': device_type_id_raw['value'], 'value_type': device_type_id_raw['value_type']},
             'associated_hub': {'value': associated_hub_raw['value'], 'value_type': associated_hub_raw['value_type']},
         }
-        
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         device_name = variables['device_name']['value']
         long_address = variables['long_address']['value']
@@ -174,19 +182,29 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
 
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
-            
-            #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
-            
-            org_device_count = get_org_device_count(cursor,organisation_id)
-            if org_device_count + 1 > max_org_devices: #if device count with new device is greater max then raise custom exception
+            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+                                                                                           database_dict['schema'],
+                                                                                           database_dict['users_table'],
+                                                                                           user_email)
+            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+                                                                                                database_dict['schema'],
+                                                                                                database_dict[
+                                                                                                    'users_organisations_table'],
+                                                                                                login_user_id)
+
+            # validate precursors to running this command
+            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], login_user_id,
+                                                        organisation_id)
+
+            org_device_count = get_org_device_count(cursor, organisation_id)
+            if org_device_count + 1 > max_org_devices:  # if device count with new device is greater max then raise custom exception
                 logging.error("Org is at device limit...")
                 raise Exception(403, f"You have reached your organisations device limit of {max_org_devices}")
-                
-            default_pool_id = get_default_pool_id(cursor,organisation_id)
-            device_id = create_device(cursor, long_address, short_address, device_type_id, associated_hub,  user_email, device_name, organisation_id)
+
+            default_pool_id = get_default_pool_id(cursor, organisation_id)
+            device_id = create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email,
+                                      device_name, organisation_id, org_uuid, user_uuid)
             pool_id = get_default_pool_id(cursor, organisation_id)
             add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid)
             device_topic = gather_device_uuid(cursor, device_id)
@@ -196,7 +214,7 @@ def lambda_handler(event, context):
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422 or status_value == 403: # if 422 then validation error
+        if status_value == 422 or status_value == 403:  # if 422 then validation error
             body_value = e.args[1]
         else:
             body_value = 'Unable to register device'
@@ -205,7 +223,7 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

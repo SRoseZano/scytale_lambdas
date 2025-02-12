@@ -305,9 +305,7 @@ def get_hub_details(cursor, organisation_id, organisation_details):
 def lambda_handler(event, context):
     try:
         database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
-        print(database_token)
         conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
-        print("here")
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
@@ -316,7 +314,7 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
                 login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-                organisation_details, org_uuid = get_organisation_details(cursor, login_user_id)
+                organisation_details  = get_organisation_details(cursor, login_user_id)
                 if organisation_details:
                     organisation_id = organisation_details['organisationID']
                     organisation_users = get_organisation_users(cursor, organisation_id, organisation_details)

@@ -81,9 +81,11 @@ def delete_organisation(cursor, organisation_id, org_uuid, user_uuid):
         sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationid = %s"
         cursor.execute(sql, (organisation_id,))
 
+        sql_audit = sql % (organisation_id,)
+
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['organisations_table'], 2, organisation_id, sql,
+            database_dict['organisations_table'], 2, organisation_id, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")

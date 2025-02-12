@@ -89,6 +89,8 @@ def demote_user(cursor, organisation_id, user_id, org_uuid, user_uuid):
 
         cursor.execute(sql, (organisation_id, user_id))
 
+        sql_audit = sql % (organisation_id, user_id)
+
         cursor.execute(get_entry, (organisation_id, user_id))
 
         last_inserted_row = cursor.fetchone()
@@ -101,7 +103,7 @@ def demote_user(cursor, organisation_id, user_id, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 1, user_id, sql,
+            database_dict['users_organisations_table'], 1, user_id, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
