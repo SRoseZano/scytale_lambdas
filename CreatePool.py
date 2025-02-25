@@ -98,7 +98,7 @@ def inherit_parent_users_into_pool(cursor, pool_id, parent_id, login_user_id, or
         SELECT %s, a.userid 
         FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
         JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b
-        ON a.userid = b.userid AND b.permissionid = 1 AND a.poolid = %s
+        ON a.userid = b.userid AND b.permissionid <= 2 AND a.poolid = %s
 
         UNION
 
