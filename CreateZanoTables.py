@@ -25,6 +25,24 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
+# Sample dictionary with values
+status_lookup_data = [{
+    "status_code": 200,
+    "status_message": "OK",
+    "status_type_id": 1
+},
+    {
+        "status_code": 201,
+        "status_message": "WARNING",
+        "status_type_id": 2
+    },
+    {
+        "status_code": 400,
+        "status_message": "ERROR",
+        "status_type_id": 3
+    }
+]
+
 
 def lambda_handler(event, context):
     try:
@@ -51,7 +69,10 @@ def lambda_handler(event, context):
                 invite_lookup,
                 device_lookup,
                 audit_log,
-                audit_operation_lookup
+                audit_operation_lookup,
+                warning_lookup,
+                status_type_lookup,
+                status_lookup
 
             """
             cursor.execute(drop_tables)
@@ -269,6 +290,32 @@ def lambda_handler(event, context):
             """
             cursor.execute(create_pools_devices_table)
 
+
+            # Create status type lookup table
+            create_status_type_lookup_table = """
+                            CREATE TABLE status_type_lookup (
+                            status_type_id INT NOT NULL,
+                            status_type VARCHAR(255),
+                            PRIMARY KEY (status_type_id)
+                        );
+                        """
+            cursor.execute(create_status_type_lookup_table)
+
+            # Create Status table
+            create_status_table = """
+                            CREATE TABLE status_lookup (
+                            status_code INT NOT NULL,
+                            status_message VARCHAR(255),
+                            status_type_id INT NOT NULL,
+                            PRIMARY KEY (status_code),
+                            FOREIGN KEY (status_type_id) REFERENCES status_type_lookup(status_type_id) ON DELETE CASCADE,
+                            INDEX (status_type_id)
+                        );
+                        """
+            cursor.execute(create_status_table)
+
+
+
             cursor.execute("SHOW TABLES;")
             result = cursor.fetchall()
             print(result)
@@ -311,6 +358,27 @@ def lambda_handler(event, context):
                         (3, 'INSERT');
                 """
             cursor.execute(insert_operations)
+
+            # Insert into warning_lookup table
+            insert_status = """
+                                   INSERT INTO status_type_lookup (status_type_id, status_type )
+                                       VALUES 
+                                           (1, 'OK'),
+                                           (2, 'WARNING'),
+                                           (3, 'ERROR');
+                                   """
+            cursor.execute(insert_status)
+
+            # Insert into status_lookup table
+            insert_status_lookup = f"""
+                                   INSERT INTO status_lookup (status_code,status_message, status_type_id )
+                                       VALUES ( %s, %s, %s)      
+                               """
+
+            values = [(entry["status_code"], entry["status_message"], entry["status_type_id"])
+                      for entry in status_lookup_data]
+
+            cursor.executemany(insert_status_lookup, values)
 
             # Commit the changes and close the connection
             conn.commit()
