@@ -72,7 +72,7 @@ def create_hub_account(cursor, hubUUID):
         raise Exception(400, e)
 
 
-def generate_hub_invite(auth_token, organisation_id):
+def generate_hub_invite(auth_token):
     try:
         logging.info("Generating hub account organisation invite...")
 
@@ -106,34 +106,22 @@ def generate_hub_invite(auth_token, organisation_id):
         raise Exception(400, e)
 
 
-def create_hub(cursor, serial, registrant, hub_name, organisation_id, org_uuid, user_uuid):
+def create_hub(cursor, serial, registrant, hub_name, org_uuid, user_uuid):
     try:
 
+        hub_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, hub_name)
         logging.info("Creating hub entry...")
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (serial, registrant, hub_name, organisationid, device_type_id, current_firmware) \
-                VALUES (%s, %s, %s, %s, %s, %s)"
-        cursor.execute(sql, (serial, registrant, hub_name, organisation_id, 1, '0.0.0'))
+        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (hubUUID, serial, registrant, hub_name, organisationUUID, device_type_id, current_firmware) \
+                VALUES (%s,%s, %s, %s, %s, %s, %s)"
+        cursor.execute(sql, (hub_uuid, serial, registrant, hub_name, org_uuid, 1, '0.0.0'))
 
-        sql_audit = sql % (serial, registrant, hub_name, organisation_id, 1, '0.0.0')
-
-        try:
-            # Fetch the ID of the newly inserted hub
-            hub_id = zanolambdashelper.helpers.get_last_inserted_row(cursor)
-
-            if hub_id is None:
-                logging.error("Unable to get inserted row for audit logs.")
-                raise ValueError("No row ID returned for inserted data.")
-
-        except Exception as e:
-            logging.error(f"Error retrieving last inserted row: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to let the outer block handle it
+        sql_audit = sql % (hub_uuid, serial, registrant, hub_name, org_uuid, 1, '0.0.0')
 
         # Fetch and log the inserted row
         try:
             get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']} 
                                        WHERE hubid = %s """
-            cursor.execute(get_inserted_row_sql, (hub_id,))
+            cursor.execute(get_inserted_row_sql, (hub_uuid,))
             last_inserted_row = cursor.fetchone()
 
             if last_inserted_row:
@@ -144,7 +132,7 @@ def create_hub(cursor, serial, registrant, hub_name, organisation_id, org_uuid, 
                 try:
                     zanolambdashelper.helpers.submit_to_audit_log(
                         cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['hubs_table'], 3, hub_id, sql_audit,
+                        database_dict['hubs_table'], 3, hub_uuid, sql_audit,
                         '{}', inserted_row_json, org_uuid, user_uuid
                     )
                     logging.info("Audit log submitted successfully.")
@@ -160,11 +148,7 @@ def create_hub(cursor, serial, registrant, hub_name, organisation_id, org_uuid, 
             traceback.print_exc()
             raise  # Re-raise to let the outer block handle it
 
-        sql = f"SELECT hubUUID FROM {database_dict['schema']}.{database_dict['hubs_table']} WHERE hubid = %s"
-        cursor.execute(sql, (hub_id,))
-        hubUUID = cursor.fetchone()[0]
-
-        return hubUUID
+        return hub_uuid
 
     except Exception as e:
         logging.error(f"Error creating hub entry: {e}")
@@ -201,12 +185,12 @@ def register_thing(thing_name, policy_name):
         raise Exception(400, e)
 
 
-def retrieve_org_policy(cursor, organisation_id):
+def retrieve_org_policy(cursor, organisation_uuid):
     try:
         logging.info("Retrieving IoT policy name... ")
         # Fetch associated policy and organisation UUID
-        sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationid = %s;"
-        cursor.execute(sql, (organisation_id,))
+        sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
+        cursor.execute(sql, (organisation_uuid,))
         result = cursor.fetchone()
         policy_name = result[0]
 
@@ -245,24 +229,24 @@ def lambda_handler(event, context):
         serial = variables['serial']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
-            policy_name = retrieve_org_policy(cursor, organisation_id)
-            hub_uuid = create_hub(cursor, serial, user_email, hub_name, organisation_id, org_uuid, user_uuid)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
+            policy_name = retrieve_org_policy(cursor, org_uuid)
+            hub_uuid = create_hub(cursor, serial, user_email, hub_name, org_uuid, user_uuid)
             account_details = create_hub_account(cursor, hub_uuid)
-            invite_code = generate_hub_invite(auth_token, organisation_id)
+            invite_code = generate_hub_invite(auth_token)
             certs = register_thing(hub_uuid, policy_name)
             conn.commit()
 

@@ -26,15 +26,15 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def get_current_device_pools(cursor, device_id):
+def get_current_device_pools(cursor, device_uuid):
     try:
         logging.info("Executing SQL query to get all pools currently belonging to device...")
         sql = f"""
-            SELECT distinct p.poolID
+            SELECT distinct p.poolUUID
             FROM pools_devices p
-            WHERE deviceid = %s
+            WHERE deviceUUID = %s
             """
-        cursor.execute(sql, (device_id,))
+        cursor.execute(sql, (device_uuid,))
         sql_result = cursor.fetchall()
         # If the result is empty, return an empty list
         if sql_result:
@@ -49,26 +49,26 @@ def get_current_device_pools(cursor, device_id):
         raise Exception(400, e)
 
 
-def get_potential_device_pools(cursor, pool_id, device_id):
+def get_potential_device_pools(cursor, pool_uuid, device_uuid):
     try:
         logging.info("Executing SQL query to get all pools that will belong to device...")
         sql = f"""
             WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentid, poolID
+                SELECT parentUUID, poolUUID
                 FROM pools
-                WHERE poolID = %s
+                WHERE poolUUID = %s
 
                 UNION
 
-                SELECT p.parentid, p.poolID
+                SELECT p.parentUUID, p.poolUUID
                 FROM pools p
-                JOIN PoolHierarchy ph ON p.poolID = ph.parentID
+                JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
 
             )
-            SELECT %s AS deviceid, poolID
+            SELECT %s AS deviceUUID, poolUUID
             FROM PoolHierarchy;
             """
-        cursor.execute(sql, (pool_id, device_id,))
+        cursor.execute(sql, (pool_uuid, device_uuid,))
 
         sql_result = cursor.fetchall()
         # If the result is empty, return an empty list
@@ -84,44 +84,44 @@ def get_potential_device_pools(cursor, pool_id, device_id):
         raise Exception(400, e)
 
 
-def append_device_to_pool(cursor, pool_id, device_id, org_UUID, user_UUID):
+def append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid ):
     try:
         logging.info("Executing SQL query to append device to pool...")
         # SQL query to add device to pool and its children
         sql = f"""
             INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceid, poolid)
             WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentid, poolID
+                SELECT parentUUID, poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE poolID = %s
+                WHERE poolUUID = %s
 
                 UNION
 
-                SELECT p.parentid, p.poolID
+                SELECT p.parentUUID, p.poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON p.poolID = ph.parentID
+                JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM {database_dict['schema']}.{database_dict['pools_devices_table']} dp
-                    WHERE dp.deviceid = %s
-                    AND dp.poolid = p.poolID
+                    WHERE dp.deviceUUID = %s
+                    AND dp.poolUUID = p.poolUUID
                 )
             )
-            SELECT %s AS deviceid, poolID
+            SELECT %s AS deviceUUID, poolUUID
             FROM PoolHierarchy;
         """
 
-        cursor.execute(sql, (pool_id, device_id, device_id,))
+        cursor.execute(sql, (pool_uuid, device_uuid, device_uuid,))
 
-        sql_audit = sql % (pool_id, device_id, device_id,)
+        sql_audit = sql % (pool_uuid, device_uuid, device_uuid,)
 
         logging.info("SQL query executed successfully.")
 
         # Fetch and log the inserted row
         try:
             get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']} 
-                                       WHERE deviceid = %s """
-            cursor.execute(get_inserted_row_sql, (device_id,))
+                                       WHERE deviceUUID = %s """
+            cursor.execute(get_inserted_row_sql, (device_uuid,))
             last_inserted_row = cursor.fetchall()
 
             if last_inserted_row:
@@ -131,8 +131,8 @@ def append_device_to_pool(cursor, pool_id, device_id, org_UUID, user_UUID):
                 try:
                     zanolambdashelper.helpers.submit_to_audit_log(
                         cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['pools_devices_table'], 3, device_id, sql_audit,
-                        '{}', inserted_row_json, org_UUID, user_UUID
+                        database_dict['pools_devices_table'], 3, device_uuid, sql_audit,
+                        '{}', inserted_row_json, org_uuid, user_uuid
                     )
                     logging.info("Audit log submitted successfully.")
                 except Exception as e:
@@ -167,46 +167,46 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         # Extract relevant attributes
-        device_id_raw = body_json.get('device_id')
-        pool_id_raw = body_json.get('pool_id')
+        device_uuid_raw = body_json.get('device_uuid')
+        pool_uuid_raw = body_json.get('pool_uuid')
 
         variables = {
-            'device_id': {'value': device_id_raw['value'], 'value_type': device_id_raw['value_type']},
-            'pool_id': {'value': pool_id_raw['value'], 'value_type': pool_id_raw['value_type']}
+            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': device_uuid_raw['value_type']},
+            'pool_uuid': {'value': pool_uuid_raw['value'], 'value_type': pool_uuid_raw['value_type']}
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        device_id = variables['device_id']['value']
-        pool_id = variables['pool_id']['value']
+        device_uuid = variables['device_uuid']['value']
+        pool_uuid = variables['pool_uuid']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_device_in_org(cursor, database_dict['schema'],
-                                                              database_dict['devices_table'], organisation_id,
-                                                              device_id)
+                                                              database_dict['devices_table'], org_uuid,
+                                                              device_uuid)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
-                                                            database_dict['pools_table'], organisation_id, pool_id)
-            current_device_pools = get_current_device_pools(cursor, device_id)
-            potential_device_pools = get_potential_device_pools(cursor, pool_id, device_id)
+                                                            database_dict['pools_table'], org_uuid, pool_uuid)
+            current_device_pools = get_current_device_pools(cursor, device_uuid)
+            potential_device_pools = get_potential_device_pools(cursor, pool_uuid, device_uuid)
 
             if (all(elem in potential_device_pools for elem in
                     current_device_pools)):  # check all pools in potential branch are in current branch (ensure device isnt in multiple branches)
-                append_device_to_pool(cursor, pool_id, device_id, org_uuid, user_uuid)
+                append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
             else:
                 print("ERROR: New pool would be in different pool branch than current")
                 raise Exception(401, "Error: New pool would be in different pool branch than current")

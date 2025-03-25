@@ -73,18 +73,18 @@ def lambda_handler(event, context):
         hub_uuid_raw = body_json.get('hub_UUID')
         
         variables = {
-            'hub_UUID': {'value': hub_uuid_raw['value'], 'value_type': hub_uuid_raw['value_type']},
+            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': hub_uuid_raw['value_type']},
         }
         
         logging.info("Validating and cleansing user inputs...")
         variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        hub_uuid = variables['hub_UUID']['value']
+        hub_uuid = variables['hub_uuid']['value']
 
         with conn.cursor() as cursor:
-                login_user_id = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-                organisation_id = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
-                zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
+                user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+                org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
+                zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
                 
                 target_firmware = check_firmware_version(cursor, hub_uuid)
                 

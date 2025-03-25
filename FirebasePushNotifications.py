@@ -37,28 +37,27 @@ lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
-def get_device_details(cursor, deviceUUID):
+def get_device_details(cursor, device_uuid):
     try:
         logging.info("Getting device details from UUID")
         sql = f"""
-            SELECT deviceid, device_name, device_type_ID 
+            SELECT deviceUUID, device_name, device_type_ID 
             FROM {database_dict['schema']}.{database_dict['devices_table']}
             WHERE deviceUUID = %s
             LIMIT 1
         """
-        cursor.execute(sql, (deviceUUID,))
+        cursor.execute(sql, (device_uuid,))
         
         device_details = cursor.fetchone()
-        print(device_details);
         
         if not device_details: #if details do not exist for device topic then its probably a hub
             sql = f"""
-                SELECT hubid, hub_name, device_type_ID 
+                SELECT hubUUID, hub_name, device_type_ID 
                 FROM {database_dict['schema']}.{database_dict['hubs_table']}
                 WHERE hubUUID = %s
                 LIMIT 1
             """
-            cursor.execute(sql, (deviceUUID,))
+            cursor.execute(sql, (device_uuid,))
         
             device_details = cursor.fetchone()
         
@@ -94,16 +93,16 @@ def lambda_handler(event, context):
         conn.autocommit = False
         status_code = event.get('status')
         mqtt_topic = event.get('mqtt_topic')
-        orgUUID, deviceUUID = extract_topic_variables(mqtt_topic)
+        org_uuid, device_uuid = extract_topic_variables(mqtt_topic)
         with conn.cursor() as cursor:
-            deviceid,device_name, device_type_ID = get_device_details(cursor,deviceUUID)
+            deviceid,device_name, device_type_ID = get_device_details(cursor,device_uuid)
 
             # Run policy creation lambda
             response = lambda_client.invoke(
                 FunctionName=firebase_messenger_lambda,
                 InvocationType='RequestResponse',
                 LogType='Tail',
-                Payload=json.dumps({"topic": f"{orgUUID}_{deviceUUID}", "status_code": status_code, "deviceid": deviceid, "device_name": device_name, "device_type_ID": device_type_ID})
+                Payload=json.dumps({"topic": f"{org_uuid}_{device_uuid}", "status_code": status_code, "device_uuid": device_uuid, "device_name": device_name, "device_type_ID": device_type_ID})
             )
             logging.info("Message Requested")
     

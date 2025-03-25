@@ -109,8 +109,7 @@ def lambda_handler(event, context):
             # Create Users table
             create_users_table = """
                 CREATE TABLE users (
-                userID INT AUTO_INCREMENT PRIMARY KEY,
-                userUUID VARCHAR(36) NOT NULL DEFAULT (UUID()),
+                userUUID VARCHAR(36) NOT NULL,
                 email VARCHAR(255) NOT NULL UNIQUE,
                 first_name VARCHAR(50) NOT NULL,
                 last_name VARCHAR(50) NOT NULL,
@@ -121,9 +120,8 @@ def lambda_handler(event, context):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 hub_user BOOL NOT NULL DEFAULT 0,
                 hubUUID VARCHAR(36), 
-                UNIQUE (userUUID),
-                INDEX (email),
-                INDEX (userUUID)
+                PRIMARY KEY (userUUID),
+                INDEX (email)
             );
             """
             cursor.execute(create_users_table)
@@ -131,8 +129,7 @@ def lambda_handler(event, context):
             # Create organisation table
             create_organisation_table = """
             CREATE TABLE organisations (
-                organisationID INT AUTO_INCREMENT PRIMARY KEY,
-                organisationUUID VARCHAR(36) NOT NULL DEFAULT (UUID()),
+                organisationUUID VARCHAR(36) NOT NULL,
                 organisation_name VARCHAR(255) NOT NULL,
                 associated_policy VARCHAR(255) NOT NULL,
                 address_line_1 VARCHAR(255) NOT NULL,
@@ -142,8 +139,7 @@ def lambda_handler(event, context):
                 postcode VARCHAR(20) NOT NULL,
                 phone_no VARCHAR(15) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (organisationUUID),
-                INDEX (organisationUUID)
+                PRIMARY KEY (organisationUUID),
             );
             """
             cursor.execute(create_organisation_table)
@@ -151,14 +147,12 @@ def lambda_handler(event, context):
             # Create Pools table
             create_pools_table = """
             CREATE TABLE pools (
-                poolID INT AUTO_INCREMENT PRIMARY KEY,
-                poolUUID VARCHAR(36) NOT NULL DEFAULT (UUID()),
-                organisationID INT NOT NULL,
+                poolUUID VARCHAR(36) NOT NULL,
+                organisationUUID INT NOT NULL,
                 pool_name VARCHAR(100) NOT NULL,
-                parentID INT,
-                UNIQUE (poolUUID),
-                INDEX (poolUUID),
-                FOREIGN KEY (organisationID) REFERENCES organisations(organisationID) ON DELETE CASCADE
+                parentUUID VARCHAR(36),
+                PRIMARY KEY (poolUUID),
+                FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE
             );
             """
             cursor.execute(create_pools_table)
@@ -209,12 +203,12 @@ def lambda_handler(event, context):
             # Create Users_organisations table
             create_users_organisations_table = """
             CREATE TABLE users_organisations (
-                userID INT NOT NULL,
-                organisationID INT NOT NULL,
+                userUUID VARCHAR(36) NOT NULL,
+                organisationUUID VARCHAR(36) NOT NULL,
                 permissionID INT NOT NULL,
-                PRIMARY KEY (userID, organisationID),
-                FOREIGN KEY (userID) REFERENCES users(userID) ON DELETE CASCADE,
-                FOREIGN KEY (organisationID) REFERENCES organisations(organisationID) ON DELETE CASCADE,
+                PRIMARY KEY (userUUID, organisationUUID),
+                FOREIGN KEY (userUUID) REFERENCES users(userUUID) ON DELETE CASCADE,
+                FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
                 FOREIGN KEY (permissionID) REFERENCES permissions_lookup(permissionID) ON DELETE CASCADE
             );
             """
@@ -223,11 +217,11 @@ def lambda_handler(event, context):
             # Create Pools_Users table
             create_pools_users_table = """
             CREATE TABLE pools_users (
-                poolID INT NOT NULL,
-                userID INT NOT NULL,
-                PRIMARY KEY (poolID, userID),
-                FOREIGN KEY (poolID) REFERENCES pools(poolID) ON DELETE CASCADE,
-                FOREIGN KEY (userID) REFERENCES users(userID) ON DELETE CASCADE
+                poolUUID VARCHAR(36) NOT NULL,
+                userUUID VARCHAR(36) NOT NULL,
+                PRIMARY KEY (poolUUID, userUUID),
+                FOREIGN KEY (poolUUID) REFERENCES pools(poolUUID) ON DELETE CASCADE,
+                FOREIGN KEY (userUUID) REFERENCES users(userUUID) ON DELETE CASCADE
             );
             """
             cursor.execute(create_pools_users_table)
@@ -235,19 +229,17 @@ def lambda_handler(event, context):
             # Create Hubs table
             create_hubs_table = """
             CREATE TABLE hubs (
-                hubID INT AUTO_INCREMENT PRIMARY KEY,
-                hubUUID VARCHAR(36) NOT NULL DEFAULT (UUID()),
+                hubUUID VARCHAR(36) NOT NULL,
                 serial VARCHAR(64) NOT NULL,
                 registrant VARCHAR(255) NOT NULL,
                 hub_name VARCHAR(255) NOT NULL,
-                organisationID INT NOT NULL,
+                organisationUUID VARCHAR(36) NOT NULL,
                 device_type_ID INT NOT NULL,
                 current_firmware VARCHAR(36) NOT NULL,
                 target_firmware VARCHAR(36),
-                UNIQUE (hubUUID),
+                PRIMARY KEY (hubUUID),
                 UNIQUE (serial),
-                INDEX (hubUUID),
-                FOREIGN KEY (organisationID) REFERENCES organisations(organisationID) ON DELETE CASCADE,
+                FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
                 FOREIGN KEY (device_type_ID) REFERENCES device_lookup(device_type_ID) ON DELETE CASCADE
             );
 
@@ -257,20 +249,18 @@ def lambda_handler(event, context):
             # Create Devices table
             create_devices_table = """
             CREATE TABLE devices (
-                deviceID INT AUTO_INCREMENT PRIMARY KEY,
-                deviceUUID VARCHAR(36) NOT NULL DEFAULT (UUID()),
+                deviceUUID VARCHAR(36) NOT NULL,
                 long_address VARCHAR(16) NOT NULL,
                 short_address VARCHAR(4) NOT NULL,
                 associated_hub VARCHAR(64) NOT NULL,
                 registrant VARCHAR(255) NOT NULL,
                 device_name VARCHAR(255) NOT NULL,
-                organisationID INT NOT NULL,
+                organisationUUID VARCHAR(36) NOT NULL,
                 device_type_ID INT NOT NULL,
-                UNIQUE (deviceUUID),
+                PRIMARY KEY (deviceUUID),
                 UNIQUE (long_address),
                 UNIQUE (short_address),
-                INDEX (deviceUUID),
-                FOREIGN KEY (organisationID) REFERENCES organisations(organisationID) ON DELETE CASCADE,
+                FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
                 FOREIGN KEY (device_type_ID) REFERENCES device_lookup(device_type_ID) ON DELETE CASCADE,
                 FOREIGN KEY (associated_hub) REFERENCES hubs(serial) ON DELETE CASCADE
             );
@@ -281,11 +271,11 @@ def lambda_handler(event, context):
             # Create Pools_Devices table
             create_pools_devices_table = """
             CREATE TABLE pools_devices (
-                poolID INT NOT NULL,
-                deviceID INT NOT NULL,
-                PRIMARY KEY (poolID, deviceID),
-                FOREIGN KEY (poolID) REFERENCES pools(poolID) ON DELETE CASCADE,
-                FOREIGN KEY (deviceID) REFERENCES devices(deviceID) ON DELETE CASCADE
+                poolUUID VARCHAR(36) NOT NULL,
+                deviceUUID VARCHAR(36) NOT NULL,
+                PRIMARY KEY (poolUUID, deviceUUID),
+                FOREIGN KEY (poolUUID) REFERENCES pools(poolUUID) ON DELETE CASCADE,
+                FOREIGN KEY (deviceUUID) REFERENCES devices(deviceUUID) ON DELETE CASCADE
             );
             """
             cursor.execute(create_pools_devices_table)

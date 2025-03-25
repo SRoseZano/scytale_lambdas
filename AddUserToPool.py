@@ -26,48 +26,48 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def append_user_to_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
+def append_user_to_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
     try:
-        logging.info(f"Executing SQL query to append user to pool:{pool_id}")
+        logging.info(f"Executing SQL query to append user to pool:{pool_uuid}")
 
         # Step 1: Create default pool entry in database
         # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
         sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userid, poolid)
+            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
             WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentid, poolID
+                SELECT parentUUID, poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE poolID = %s
+                WHERE poolUUID = %s
 
                 UNION
 
-                SELECT p.parentid, p.poolID
+                SELECT p.parentUUID, p.poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON ph.poolID = p.parentID
+                JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
-                    WHERE dp.userid = %s
-                    AND dp.poolid = p.poolID
+                    WHERE dp.userUUID = %s
+                    AND dp.poolUUID = p.poolUUID
                 )
 
             )
-            SELECT %s AS userid, poolID
+            SELECT %s AS userUUID, poolUUID
             FROM PoolHierarchy;
 
         """
 
-        cursor.execute(sql, (pool_id, user_id, user_id))
+        cursor.execute(sql, (pool_uuid, target_user_uuid, target_user_uuid))
 
-        sql_audit = sql % (pool_id, user_id, user_id)
+        sql_audit = sql % (pool_uuid, target_user_uuid, target_user_uuid)
 
         # Step 2: Create audit log
         try:
             get_inserted_row_sql = f"""
                         SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} 
-                        WHERE userid = %s LIMIT 1
+                        WHERE userUUID = %s LIMIT 1
                     """
-            cursor.execute(get_inserted_row_sql, (user_id,))
+            cursor.execute(get_inserted_row_sql, (target_user_uuid,))
             last_inserted_row = cursor.fetchall()
 
             if last_inserted_row:
@@ -76,7 +76,7 @@ def append_user_to_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
 
                 zanolambdashelper.helpers.submit_to_audit_log(
                     cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_id, sql_audit,
+                    database_dict['pools_users_table'], 3, pool_uuid, sql_audit,
                     '{}', inserted_row_json, org_uuid, user_uuid
                 )
                 logging.info("Audit log submitted successfully.")
@@ -108,42 +108,42 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         # Extract relevant attributes
-        user_id_raw = body_json.get('user_id')
-        pool_id_raw = body_json.get('pool_id')
+        user_uuid_raw = body_json.get('user_uuid')
+        pool_uuid_raw = body_json.get('pool_uuid')
 
         variables = {
-            'user_id': {'value': user_id_raw['value'], 'value_type': user_id_raw['value_type']},
-            'pool_id': {'value': pool_id_raw['value'], 'value_type': pool_id_raw['value_type']}
+            'user_uuid': {'value': user_uuid_raw['value'], 'value_type': user_uuid_raw['value_type']},
+            'pool_uuid': {'value': pool_uuid_raw['value'], 'value_type': pool_uuid_raw['value_type']}
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        user_id = variables['user_id']['value']
-        pool_id = variables['pool_id']['value']
+        target_user_uuid = variables['user_uuid']['value']
+        pool_uuid = variables['pool_uuid']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_user_in_org(cursor, database_dict['schema'],
-                                                            database_dict['users_organisations_table'], organisation_id,
-                                                            user_id)
+                                                            database_dict['users_organisations_table'], org_uuid,
+                                                            target_user_uuid)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
-                                                            database_dict['pools_table'], organisation_id, pool_id)
+                                                            database_dict['pools_table'], org_uuid, pool_uuid)
 
-            append_user_to_pool(cursor, pool_id, user_id, org_uuid, user_uuid)
+            append_user_to_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

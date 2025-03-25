@@ -26,44 +26,44 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uuid):
+def append_user_to_all_pools(cursor,org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append user to all org pools...")
         # SQL query to find top level pool and assign to everyone under it
         sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userid, poolid)
+            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
             WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentid, poolID
+                SELECT parentUUID, poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE parentID is NULL AND organisationid = %s
+                WHERE parentUUID is NULL AND organisationUUID = %s
 
                 UNION
 
-                SELECT p.parentid, p.poolID
+                SELECT p.parentUUID, p.poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON ph.poolID = p.parentID
+                JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
 
             )
-            SELECT %s AS userid, poolID
+            SELECT %s AS userUUID, poolUUID
             FROM PoolHierarchy ph
             WHERE NOT EXISTS (
                     SELECT 1
                     FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
-                    WHERE dp.userid = %s
-                    AND dp.poolid = ph.poolID
+                    WHERE dp.userUUID = %s
+                    AND dp.poolUUID = ph.poolUUID
                 );
 
         """
 
-        cursor.execute(sql, (organisation_id, user_id, user_id))
+        cursor.execute(sql, (org_uuid, user_uuid, user_uuid))
 
-        sql_audit = sql % (organisation_id, user_id, user_id)
+        sql_audit = sql % (org_uuid, user_uuid, user_uuid )
 
         get_current_entry = f"""
                                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
-                                       WHERE userid = %s 
+                                       WHERE userUUID = %s 
                                    """
-        cursor.execute(get_current_entry, (user_id,))
+        cursor.execute(get_current_entry, (user_uuid,))
         last_inserted_row = cursor.fetchall()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -74,7 +74,7 @@ def append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uu
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 3, user_id, sql_audit,
+            database_dict['pools_users_table'], 3, user_uuid, sql_audit,
             '{}', current_row_json, org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
@@ -85,15 +85,15 @@ def append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uu
         raise Exception(400, e)
 
 
-def promote_user_to_owner(cursor, organisation_id, user_id, org_uuid, user_uuid):
+def promote_user_to_owner(cursor, org_uuid, user_uuid):
     try:
 
         get_entry = f"""
                            SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-                           WHERE organisationID = %s AND userID = %s;
+                           WHERE organisationUUID = %s AND userUUID = %s;
 
                """
-        cursor.execute(get_entry, (organisation_id, user_id))
+        cursor.execute(get_entry, (org_uuid, user_uuid))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -107,14 +107,14 @@ def promote_user_to_owner(cursor, organisation_id, user_id, org_uuid, user_uuid)
         sql = f"""
             UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
             SET permissionID = 1
-            WHERE organisationID = %s AND userID = %s;
+            WHERE organisationUUID = %s AND userUUID = %s;
 
         """
-        cursor.execute(sql, (organisation_id, user_id))
+        cursor.execute(sql, (org_uuid, user_uuid))
 
-        sql_audit = sql % (organisation_id, user_id)
+        sql_audit = sql % (org_uuid, user_uuid)
 
-        cursor.execute(get_entry, (organisation_id, user_id))
+        cursor.execute(get_entry, (org_uuid, user_uuid))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -125,7 +125,7 @@ def promote_user_to_owner(cursor, organisation_id, user_id, org_uuid, user_uuid)
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 1, organisation_id, sql_audit,
+            database_dict['users_organisations_table'], 1, org_uuid, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
@@ -136,15 +136,15 @@ def promote_user_to_owner(cursor, organisation_id, user_id, org_uuid, user_uuid)
         raise Exception(400, e)
 
 
-def demote_user_to_admin(cursor, organisation_id, login_user_id, org_uuid, user_uuid):
+def demote_user_to_admin(cursor,user_uuid, org_uuid):
     try:
 
         get_entry = f"""
                                    SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-                                   WHERE organisationID = %s AND userID = %s;
+                                   WHERE organisationUUID = %s AND userUUID = %s;
 
                        """
-        cursor.execute(get_entry, (organisation_id, login_user_id))
+        cursor.execute(get_entry, (org_uuid, user_uuid))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -158,14 +158,14 @@ def demote_user_to_admin(cursor, organisation_id, login_user_id, org_uuid, user_
         sql = f"""
             UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
             SET permissionID = 2
-            WHERE organisationID = %s AND userID = %s;
+            WHERE organisationUUID = %s AND userUUID = %s;
 
         """
-        cursor.execute(sql, (organisation_id, login_user_id))
+        cursor.execute(sql, (org_uuid, user_uuid))
 
-        sql_audit = sql % (organisation_id, login_user_id)
+        sql_audit = sql % (org_uuid, user_uuid)
 
-        cursor.execute(get_entry, (organisation_id, login_user_id))
+        cursor.execute(get_entry, (org_uuid, user_uuid))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -176,7 +176,7 @@ def demote_user_to_admin(cursor, organisation_id, login_user_id, org_uuid, user_
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 1, organisation_id, sql_audit,
+            database_dict['users_organisations_table'], 1, user_uuid, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid
         )
 
@@ -200,39 +200,39 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         # Extract relevant attributes
-        user_id_raw = body_json.get('user_id')
+        user_uuid_raw = body_json.get('user_uuid')
 
         variables = {
-            'user_id': {'value': user_id_raw['value'], 'value_type': user_id_raw['value_type']},
+            'user_uuid': {'value': user_uuid_raw['value'], 'value_type': user_uuid_raw['value_type']},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        user_id = variables['user_id']['value']
+        target_user_uuid = variables['user_uuid']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_owner(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_user_in_org(cursor, database_dict['schema'],
-                                                            database_dict['users_organisations_table'], organisation_id,
-                                                            user_id)
+                                                            database_dict['users_organisations_table'], org_uuid,
+                                                            target_user_uuid)
 
-            append_user_to_all_pools(cursor, organisation_id, user_id, org_uuid, user_uuid)
-            promote_user_to_owner(cursor, organisation_id, user_id, org_uuid, user_uuid)
-            demote_user_to_admin(cursor, organisation_id, login_user_id, org_uuid, user_uuid)
+            append_user_to_all_pools(cursor, org_uuid, target_user_uuid)
+            promote_user_to_owner(cursor, org_uuid, target_user_uuid)
+            demote_user_to_admin(cursor, user_uuid, org_uuid)
             conn.commit()
 
     except Exception as e:

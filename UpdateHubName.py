@@ -26,13 +26,13 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid):
+def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
     try:
         get_entry = f"""
                                            SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                           WHERE organisationid = %s AND hubid = %s;
+                                           WHERE organisationUUID = %s AND hubUUID = %s;
                            """
-        cursor.execute(get_entry, (organisation_id, hub_id,))
+        cursor.execute(get_entry, (org_uuid, hub_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -42,13 +42,13 @@ def rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid):
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationid = %s AND hubid = %s "
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationUUID = %s AND hubUUID = %s "
 
-        cursor.execute(sql, (hub_name, organisation_id, hub_id))
+        cursor.execute(sql, (hub_name, org_uuid, hub_uuid))
 
-        sql_audit = sql % (hub_name, organisation_id, hub_id)
+        sql_audit = sql % (hub_name, org_uuid, hub_uuid)
 
-        cursor.execute(get_entry, (organisation_id, hub_id,))
+        cursor.execute(get_entry, (org_uuid, hub_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -59,7 +59,7 @@ def rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 3, hub_id, sql_audit,
+            database_dict['hubs_table'], 3, hub_uuid, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
     except Exception as e:
@@ -81,41 +81,40 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         hub_name_raw = body_json.get('hub_name')
-        hub_id_raw = body_json.get('hub_id')
+        hub_uuid_raw = body_json.get('hub_uuid')
 
         variables = {
             'hub_name': {'value': hub_name_raw['value'], 'value_type': hub_name_raw['value_type']},
-            'hub_id': {'value': hub_id_raw['value'], 'value_type': hub_id_raw['value_type']},
+            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': hub_uuid_raw['value_type']},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         hub_name = variables['hub_name']['value']
-        hub_id = variables['hub_id']['value']
+        hub_uuid = variables['hub_uuid']['value']
 
         with conn.cursor() as cursor:
 
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
-            print(organisation_id)
+                                                                                                user_uuid)
 
-            print(database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
+            print(database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
-                                                            database_dict['hubs_table'], organisation_id, hub_id)
+                                                            database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, organisation_id, hub_name, hub_id, org_uuid, user_uuid)
+            rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

@@ -24,14 +24,14 @@ database_dict = zanolambdashelper.helpers.get_database_dict()
 rds_client = zanolambdashelper.helpers.create_client('rds')
 
 
-def delete_device_from_organisation(cursor, organisation_id, device_id, org_uuid, user_uuid):
+def delete_device_from_organisation(cursor,  device_uuid, org_uuid, user_uuid):
     try:
 
         get_entry = f"""
                                               SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                                              WHERE deviceid = %s and organisationid = %s;
+                                              WHERE deviceUUID = %s and organisationUUID = %s;
                               """
-        cursor.execute(get_entry, (device_id, organisation_id,))
+        cursor.execute(get_entry, (device_uuid, org_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -44,15 +44,15 @@ def delete_device_from_organisation(cursor, organisation_id, device_id, org_uuid
         sql = f"""  
             DELETE d
             FROM {database_dict['devices_table']} d
-            WHERE d.deviceid = %s AND d.organisationid = %s;
+            WHERE d.deviceUUID = %s AND d.organisationUUID = %s;
         """
-        cursor.execute(sql, (device_id, organisation_id))
+        cursor.execute(sql, (device_uuid, org_uuid))
 
-        sql_audit = sql % (device_id, organisation_id)
+        sql_audit = sql % (device_uuid, org_uuid)
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 2, device_id, sql_audit,
+            database_dict['devices_table'], 2, device_uuid, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid
         )
     except Exception as e:
@@ -74,31 +74,31 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        device_id_raw = body_json.get('device_id')
+        device_uuid_raw = body_json.get('device_uuid')
 
         variables = {
-            'device_id': {'value': device_id_raw['value'], 'value_type': device_id_raw['value_type']},
+            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': device_uuid_raw['value_type']},
         }
 
-        device_id = variables['device_id']['value']
+        device_uuid = variables['device_uuid']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_device_in_org(cursor, database_dict['schema'],
-                                                              database_dict['devices_table'], organisation_id,
-                                                              device_id)
-            delete_device_from_organisation(cursor, organisation_id, device_id, org_uuid, user_uuid)
+                                                              database_dict['devices_table'], org_uuid,
+                                                              device_uuid)
+            delete_device_from_organisation(cursor, device_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

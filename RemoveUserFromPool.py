@@ -34,7 +34,7 @@ database_dict['pools_table'] = "pools"
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisation_id):
+def has_permissions_to_remove_target(cursor, user_uuid, target_user_uuid, org_uuid):
     try:
 
         logging.info("Checking login user permissions...")
@@ -42,13 +42,12 @@ def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisatio
         sql = f"""
             SELECT DISTINCT permissionid
             FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            WHERE a.userid = %s
-            AND a.organisationid = %s
-            AND a.permissionid 
+            WHERE a.userUUID = %s
+            AND a.organisationUUID = %s
             LIMIT 1
         """
 
-        cursor.execute(sql, (login_user_id, organisation_id))
+        cursor.execute(sql, (user_uuid, org_uuid))
         login_user_permissions = cursor.fetchone()
 
         logging.info("Checking target user permissions...")
@@ -56,13 +55,12 @@ def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisatio
         sql = f"""
             SELECT DISTINCT permissionid
             FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            WHERE a.userid = %s
-            AND a.organisationid = %s
-            AND a.permissionid 
+            WHERE a.userUUID = %s
+            AND a.organisationUUID = %s
             LIMIT 1
         """
 
-        cursor.execute(sql, (user_id, organisation_id))
+        cursor.execute(sql, (target_user_uuid, org_uuid))
         target_user_permissions = cursor.fetchone()
 
     except Exception as e:
@@ -76,14 +74,14 @@ def has_permissions_to_remove_target(cursor, login_user_id, user_id, organisatio
         raise Exception(402, "Cannot remove a user of same permission status from group, please demote user first")
 
 
-def remove_user_from_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
+def remove_user_from_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
     try:
 
         get_entry = f"""
                              SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
                              WHERE userid = %s;
              """
-        cursor.execute(get_entry, (user_id,))
+        cursor.execute(get_entry, (target_user_uuid,))
         last_inserted_row = cursor.fetchall()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -93,30 +91,30 @@ def remove_user_from_pool(cursor, pool_id, user_id, org_uuid, user_uuid):
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Executing SQL query to append device to pool:")
-        logging.info(pool_id)
+        logging.info(pool_uuid)
         # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
         sql = f"""
             DELETE FROM {database_dict['schema']}.{database_dict['pools_users_table']}
-                WHERE poolid IN (
+                WHERE poolUUID IN (
                     WITH RECURSIVE PoolHierarchy AS (
-                        SELECT parentid, poolID
+                        SELECT parentUUID, poolUUID
                         FROM {database_dict['schema']}.{database_dict['pools_table']}
-                        WHERE poolID = %s
+                        WHERE poolUUID = %s
                         UNION
-                        SELECT p.parentid, p.poolID
+                        SELECT p.parentUUID, p.poolUUID
                         FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                        JOIN PoolHierarchy ph ON p.parentID = ph.poolID
+                        JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
                     )
-                    SELECT poolID FROM PoolHierarchy
-                ) AND userid = %s;
+                    SELECT poolUUID FROM PoolHierarchy
+                ) AND userUUID = %s;
             """
 
-        cursor.execute(sql, (pool_id, user_id))
-        sql_audit = sql % (pool_id, user_id)
+        cursor.execute(sql, (pool_uuid, target_user_uuid))
+        sql_audit = sql % (pool_uuid, target_user_uuid)
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 2, user_id, sql_audit,
+            database_dict['pools_users_table'], 2, target_user_uuid, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid)
 
     except Exception as e:
@@ -139,43 +137,43 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         # Extract relevant attributes
-        user_id_raw = body_json.get('user_id')
-        pool_id_raw = body_json.get('pool_id')
+        user_uuid_raw = body_json.get('user_uuid')
+        pool_uuid_raw = body_json.get('pool_uuid')
 
         variables = {
-            'user_id': {'value': user_id_raw['value'], 'value_type': user_id_raw['value_type']},
-            'pool_id': {'value': pool_id_raw['value'], 'value_type': pool_id_raw['value_type']}
+            'user_uuid': {'value': user_uuid_raw['value'], 'value_type': user_uuid_raw['value_type']},
+            'pool_uuid': {'value': pool_uuid_raw['value'], 'value_type': pool_uuid_raw['value_type']}
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        user_id = variables['user_id']['value']
-        pool_id = variables['pool_id']['value']
+        target_user_uuid = variables['user_uuid']['value']
+        pool_uuid = variables['pool_uuid']['value']
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_user_in_org(cursor, database_dict['schema'],
-                                                            database_dict['users_organisations_table'], organisation_id,
-                                                            user_id)
+                                                            database_dict['users_organisations_table'], org_uuid,
+                                                            target_user_uuid)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
-                                                            database_dict['pools_table'], organisation_id, pool_id)
+                                                            database_dict['pools_table'], org_uuid, pool_uuid)
 
-            has_permissions_to_remove_target(cursor, login_user_id, user_id, organisation_id)
-            remove_user_from_pool(cursor, pool_id, user_id, org_uuid, user_uuid)
+            has_permissions_to_remove_target(cursor, user_uuid, target_user_uuid, org_uuid)
+            remove_user_from_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

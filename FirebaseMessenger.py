@@ -12,7 +12,7 @@ if not firebase_admin._apps:
             cred = credentials.Certificate(firebase_credentials)  # Update the path
             firebase_admin.initialize_app(cred)
 
-def send_message_to_topic(msg_topic, status_code, device_name, device_type_ID, deviceid):
+def send_message_to_topic(msg_topic, status_code, device_name, device_type_ID, device_uuid):
     
     # Determine the message body based on the status code
     if status_code == 201:
@@ -30,7 +30,7 @@ def send_message_to_topic(msg_topic, status_code, device_name, device_type_ID, d
         ),
         data={  # Add device_type_ID to the payload
             'device_type_id': f"{device_type_ID}",
-            'deviceid': f"{deviceid}",
+            'device_uuid': f"{device_uuid}",
             'status_code': f"{status_code}"
         },
         topic=msg_topic,
@@ -52,9 +52,9 @@ def lambda_handler(event, context):
         status_code = event.get("status_code","")
         device_name = event.get("device_name","")
         device_type_ID = event.get("device_type_ID","")
-        deviceid = event.get("deviceid","")
+        device_uuid = event.get("device_uuid","")
         
-        send_message_to_topic(firebase_topic,status_code,device_name,device_type_ID, deviceid)
+        send_message_to_topic(firebase_topic,status_code,device_name,device_type_ID, device_uuid)
         
     
     except ClientError as e:

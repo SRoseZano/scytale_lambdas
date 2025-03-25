@@ -28,11 +28,11 @@ zanolambdashelper.helpers.set_logging('INFO')
 max_org_devices = 500
 
 
-def get_org_device_count(cursor, organisation_id):
+def get_org_device_count(cursor, org_uuid):
     try:
         logging.info("Fetching org device count...")
-        sql = f"SELECT COUNT(DISTINCT deviceid) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationid = %s"
-        cursor.execute(sql, (organisation_id,))
+        sql = f"SELECT COUNT(DISTINCT deviceUUID) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationUUID = %s"
+        cursor.execute(sql, (org_uuid,))
         return cursor.fetchone()[0]
     except Exception as e:
         logging.error(f"Error fetching org device count: {e}")
@@ -40,44 +40,41 @@ def get_org_device_count(cursor, organisation_id):
         raise Exception(400, e)
 
 
-def get_default_pool_id(cursor, organisation_id):
+def get_default_pool_id(cursor, org_uuid):
     try:
-        logging.info("Fetching default pool ID...")
-        sql = f"SELECT poolid FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationid = %s and parentid is null"
-        cursor.execute(sql, (organisation_id,))
+        logging.info("Fetching default pool UUID...")
+        sql = f"SELECT poolUUID FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s and parentUUID is null"
+        cursor.execute(sql, (org_uuid,))
         result = cursor.fetchone()
         if result:
             return result[0]
         else:
             raise ValueError("Unable to gather default pool")
     except Exception as e:
-        logging.error(f"Error fetching default pool ID: {e}")
+        logging.error(f"Error fetching default pool UUID: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
 
 def create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email, device_name,
-                  organisation_id, org_uuid, user_uuid):
+                   org_uuid, user_uuid):
     try:
         logging.info("Creating device entry...")
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationid) \
+        device_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, device_name)
+        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
                 VALUES (%s, %s, %s, %s,%s, %s, %s)"
         cursor.execute(sql, (
-        long_address, short_address, device_type_id, associated_hub, user_email, device_name, organisation_id))
+        long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid))
 
         sql_audit = sql % (
-        long_address, short_address, device_type_id, associated_hub, user_email, device_name, organisation_id)
+        long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid)
 
-        # Fetch the ID of the newly inserted device
-        sql_fetch_last_id = "SELECT LAST_INSERT_ID();"
-        cursor.execute(sql_fetch_last_id)
-        device_id = cursor.fetchone()[0]
 
         get_entry = f"""
                         SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                        WHERE deviceid = %s;
+                        WHERE deviceUUID = %s;
         """
-        cursor.execute(get_entry, (device_id,))
+        cursor.execute(get_entry, (device_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -88,29 +85,29 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, organisation_id, sql_audit,
+            database_dict['devices_table'], 3, org_uuid, sql_audit,
             '{}', current_row_json, org_uuid, user_uuid
         )
 
-        return device_id
+        return device_uuid
     except Exception as e:
         logging.error(f"Error creating device entry: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
 
 
-def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
+def add_device_to_default_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
     try:
         logging.info("Adding device to default pool...")
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolid, deviceid) VALUES (%s, %s)"
-        cursor.execute(sql, (pool_id, device_id))
-        sql_audit = sql % (pool_id, device_id)
+        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolUUID, deviceUUID) VALUES (%s, %s)"
+        cursor.execute(sql, (pool_uuid, device_uuid))
+        sql_audit = sql % (pool_uuid, device_uuid)
 
         get_entry = f"""
                     SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
-                    WHERE deviceid = %s and poolid = %s;
+                    WHERE deviceUUID = %s and poolUUID = %s;
                 """
-        cursor.execute(get_entry, (device_id, pool_id,))
+        cursor.execute(get_entry, (device_uuid, pool_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -121,7 +118,7 @@ def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_devices_table'], 3, pool_id, sql_audit,
+            database_dict['pools_devices_table'], 3, pool_uuid, sql_audit,
             '{}', current_row_json, org_uuid, user_uuid
         )
 
@@ -130,17 +127,6 @@ def add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid):
         traceback.print_exc()
         raise Exception(400, e)
 
-
-def gather_device_uuid(cursor, device_id):
-    try:
-        logging.info("Gathering topic from device...")
-        sql = f"SELECT deviceUUID FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE deviceid = %s"
-        cursor.execute(sql, (device_id,))
-        return cursor.fetchone()[0]
-    except Exception as e:
-        logging.error(f"Error gathering topic from device: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
 
 
 def lambda_handler(event, context):
@@ -182,32 +168,32 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
 
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
 
-            org_device_count = get_org_device_count(cursor, organisation_id)
+            org_device_count = get_org_device_count(cursor, org_uuid)
             if org_device_count + 1 > max_org_devices:  # if device count with new device is greater max then raise custom exception
                 logging.error("Org is at device limit...")
                 raise Exception(403, f"You have reached your organisations device limit of {max_org_devices}")
 
-            default_pool_id = get_default_pool_id(cursor, organisation_id)
-            device_id = create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email,
-                                      device_name, organisation_id, org_uuid, user_uuid)
-            pool_id = get_default_pool_id(cursor, organisation_id)
-            add_device_to_default_pool(cursor, pool_id, device_id, org_uuid, user_uuid)
-            device_topic = gather_device_uuid(cursor, device_id)
+
+            device_uuid = create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email,
+                                      device_name, org_uuid, user_uuid)
+            pool_uuid = get_default_pool_id(cursor, org_uuid)
+            add_device_to_default_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
+            device_topic = device_uuid
             conn.commit()
 
 

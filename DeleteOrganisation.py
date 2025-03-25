@@ -31,16 +31,16 @@ policy_detatch_lambda = "DetachPolicy"
 
 
 
-def get_user_identities(cursor, organisation_id):
+def get_user_identities(cursor, organisation_uuid):
     try:
         logging.info("Fetching user identities...")
         sql = f"""
             SELECT DISTINCT a.identity_pool_id 
             FROM {database_dict['schema']}.{database_dict['users_table']} a
-            INNER JOIN {database_dict['users_organisations_table']} b ON a.userid = b.userid 
-            AND organisationid = %s
+            INNER JOIN {database_dict['users_organisations_table']} b ON a.userUUID = b.userUUID 
+            AND organisationUUID = %s
         """
-        cursor.execute(sql, (organisation_id,))
+        cursor.execute(sql, (organisation_uuid,))
         user_identities = cursor.fetchall()
         user_identities = [identity[0] for identity in user_identities]
         return user_identities
@@ -49,11 +49,11 @@ def get_user_identities(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def get_associated_policy(cursor, organisation_id):
+def get_associated_policy(cursor, organisation_uuid):
     try:
         logging.info("Fetching associated policy...")
-        sql = f"SELECT associated_policy FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationid = %s;"
-        cursor.execute(sql, (organisation_id,))
+        sql = f"SELECT associated_policy FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationUUID = %s;"
+        cursor.execute(sql, (organisation_uuid,))
         policy_name = cursor.fetchone()[0]
         return policy_name
     except Exception as e:
@@ -61,14 +61,14 @@ def get_associated_policy(cursor, organisation_id):
         traceback.print_exc()
         raise Exception(400, e)
 
-def delete_organisation(cursor, organisation_id, org_uuid, user_uuid):
+def delete_organisation(cursor, org_uuid, user_uuid):
 
     try:
         get_historic_entry = f"""
                                       SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']} 
-                                      WHERE organisationID = %s LIMIT 1
+                                      WHERE organisationUUID = %s LIMIT 1
                                   """
-        cursor.execute(get_historic_entry, (organisation_id,))
+        cursor.execute(get_historic_entry, (org_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -78,14 +78,14 @@ def delete_organisation(cursor, organisation_id, org_uuid, user_uuid):
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Deleting organisation...")
-        sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationid = %s"
-        cursor.execute(sql, (organisation_id,))
+        sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationUUID = %s"
+        cursor.execute(sql, (org_uuid,))
 
-        sql_audit = sql % (organisation_id,)
+        sql_audit = sql % (org_uuid,)
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['organisations_table'], 2, organisation_id, sql_audit,
+            database_dict['organisations_table'], 2, org_uuid, sql_audit,
             historic_row_json, '{}', org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
@@ -113,7 +113,7 @@ def detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, 
             if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
                 logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
                 traceback.print_exc()
-                raise Exception(400, e)
+                raise Exception(400,f"Lambda invocation failed, ResponsePayload: {response_payload}")
                 
     except Exception as e:
         logging.error(f"Error detaching users from policy: {e}")
@@ -134,7 +134,7 @@ def delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name)
         if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
             logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
             traceback.print_exc()
-            raise Exception(400, e)
+            raise Exception(400, f"Lambda invocation failed, ResponsePayload: {response_payload}")
     except Exception as e:
         logging.error(f"Error deleting associated policy: {e}")
         traceback.print_exc()
@@ -155,15 +155,15 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
             
             #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
+            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
 
-            user_identities = get_user_identities(cursor,  organisation_id)
-            policy_name = get_associated_policy(cursor,organisation_id)
-            delete_organisation(cursor, organisation_id, org_uuid, user_uuid)
+            user_identities = get_user_identities(cursor,  org_uuid)
+            policy_name = get_associated_policy(cursor,org_uuid)
+            delete_organisation(cursor, org_uuid, user_uuid)
             detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, user_identities)
             delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name)
 

@@ -27,17 +27,17 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 
-def get_user_details(cursor, user_id):
+def get_user_details(cursor, user_uuid):
     
     try:
         logging.info("Getting user details...")
         sql = f"""
-            SELECT  userid, userUUID, email, first_name, last_name, DATE_FORMAT(birthdate, '%m/%d/%Y') AS birthdate,
+            SELECT  userUUID, email, first_name, last_name, DATE_FORMAT(birthdate, '%m/%d/%Y') AS birthdate,
                      zone_info, locale
             FROM {database_dict['schema']}.{database_dict['users_table']} 
-            WHERE userid = %s 
+            WHERE userUUID = %s 
         """
-        cursor.execute(sql, (user_id,))
+        cursor.execute(sql, (user_uuid,))
         result = cursor.fetchone()
     
         columns = [desc[0] for desc in cursor.description]
@@ -65,8 +65,8 @@ def lambda_handler(event, context):
 
     try:
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            user_details = get_user_details(cursor, login_user_id)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            user_details = get_user_details(cursor, user_uuid)
 
 
     except Exception as e:
@@ -75,7 +75,7 @@ def lambda_handler(event, context):
         if status_value == 422: # if 422 then validation error
             body_value = e.args[1]
         else:
-            body_value = 'Unable to retrive organisation details'
+            body_value = 'Unable to retrieve user details'
         error_response = {
             'statusCode': status_value,
             'body': body_value,

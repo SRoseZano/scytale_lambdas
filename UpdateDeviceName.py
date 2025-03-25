@@ -26,14 +26,14 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_device(cursor, organisation_id, device_name, device_id, org_uuid, user_uuid):
+def rename_device(cursor, device_name, device_uuid, org_uuid, user_uuid):
     try:
 
         get_entry = f"""
                                      SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                                     WHERE organisationid = %s AND deviceid = %s;
+                                     WHERE organisationUUID = %s AND deviceUUID = %s;
                      """
-        cursor.execute(get_entry, (organisation_id, device_id,))
+        cursor.execute(get_entry, (org_uuid, device_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -43,12 +43,12 @@ def rename_device(cursor, organisation_id, device_name, device_id, org_uuid, use
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Renaming Device...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET device_name = %s WHERE organisationid = %s AND deviceid = %s "
-        cursor.execute(sql, (device_name, organisation_id, device_id,))
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET device_name = %s WHERE organisationUUID = %s AND deviceUUID = %s "
+        cursor.execute(sql, (device_name, org_uuid, device_uuid,))
 
-        sql_audit = sql % (device_name, organisation_id, device_id,)
+        sql_audit = sql % (device_name, org_uuid, device_uuid,)
 
-        cursor.execute(get_entry, (organisation_id, device_id,))
+        cursor.execute(get_entry, (org_uuid, device_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -59,7 +59,7 @@ def rename_device(cursor, organisation_id, device_name, device_id, org_uuid, use
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, device_id, sql_audit,
+            database_dict['devices_table'], 3, device_uuid, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
 
@@ -82,40 +82,40 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         device_name_raw = body_json.get('device_name')
-        device_id_raw = body_json.get('device_id')
+        device_uuid_raw = body_json.get('device_uuid')
 
         variables = {
             'device_name': {'value': device_name_raw['value'], 'value_type': device_name_raw['value_type']},
-            'device_id': {'value': device_id_raw['value'], 'value_type': device_id_raw['value_type']},
+            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': device_uuid_raw['value_type']},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         device_name = variables['device_name']['value']
-        device_id = variables['device_id']['value']
+        device_uuid = variables['device_uuid']['value']
 
         with conn.cursor() as cursor:
 
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
                                                                                                 database_dict['schema'],
                                                                                                 database_dict[
                                                                                                     'users_organisations_table'],
-                                                                                                login_user_id)
+                                                                                                user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], login_user_id,
-                                                        organisation_id)
+                                                        database_dict['users_organisations_table'], user_uuid,
+                                                        org_uuid)
             zanolambdashelper.helpers.is_target_device_in_org(cursor, database_dict['schema'],
-                                                              database_dict['devices_table'], organisation_id,
-                                                              device_id)
+                                                              database_dict['devices_table'], org_uuid,
+                                                              device_uuid)
 
-            rename_device(cursor, organisation_id, device_name, device_id, org_uuid, user_uuid)
+            rename_device(cursor, device_name, device_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:

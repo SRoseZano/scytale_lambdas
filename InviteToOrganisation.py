@@ -31,7 +31,7 @@ def generate_code():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=6)).upper()
 
 
-def append_invite(cursor, organisation_id, invite_type_id, target_email):
+def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
     #parse to int
     invite_type_id = int(invite_type_id)
     code = generate_code()
@@ -41,24 +41,24 @@ def append_invite(cursor, organisation_id, invite_type_id, target_email):
     while attempt < max_attempts:
         attempt += 1
         if invite_type_id == 1 or invite_type_id == 3:
-            delete_sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE organisationID = %s AND inviteID = %s"
-            cursor.execute(delete_sql, (organisation_id, invite_type_id))
+            delete_sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE organisationUUID = %s AND inviteID = %s"
+            cursor.execute(delete_sql, (organisation_uuid, invite_type_id))
             logging.info("Deleted existing invite code for the organization.")
             
             if invite_type_id == 1:
-                sql = f"INSERT INTO {database_dict['schema']}.{database_dict['organisation_invites_table']} (invite_code, organisationID, target_email, inviteID, valid_until) " \
+                sql = f"INSERT INTO {database_dict['schema']}.{database_dict['organisation_invites_table']} (invite_code, organisationUUID, target_email, inviteID, valid_until) " \
                       f"VALUES (%s, %s, NULL, %s, DATE_ADD(NOW(), INTERVAL 30 MINUTE))"
             else:
-                sql = f"INSERT INTO {database_dict['schema']}.{database_dict['organisation_invites_table']} (invite_code, organisationID, target_email, inviteID) " \
+                sql = f"INSERT INTO {database_dict['schema']}.{database_dict['organisation_invites_table']} (invite_code, organisationUUID, target_email, inviteID) " \
                       f"VALUES (%s, %s, NULL, %s)"
             try:
-                cursor.execute(sql, (code, organisation_id, invite_type_id))
+                cursor.execute(sql, (code, organisation_uuid, invite_type_id))
                 logging.info("Inserted new invite code into the table.")
                 break
             except mysql.connector.IntegrityError as e:
                 if e.errno == 1062:
                     logging.info(f"The code '{code}' already exists in the table. Retrying...")
-                    code = generate_new_code()
+                    code = generate_code()
                 else:
                     logging.error(f"Error generating code: {e}")
                     traceback.print_exc()
@@ -104,14 +104,14 @@ def lambda_handler(event, context):
         target_email = variables['target_email']['value'] if target_email_raw else None
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            organisation_id, org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], login_user_id)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
             
             #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], login_user_id, organisation_id)
+            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
            
             logging.info("Appending new invite code...")
-            generated_code = append_invite(cursor, organisation_id, invite_type_id, target_email)
+            generated_code = append_invite(cursor, org_uuid, invite_type_id, target_email)
             conn.commit()
 
     except Exception as e:
