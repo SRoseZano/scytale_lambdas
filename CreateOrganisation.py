@@ -47,7 +47,7 @@ def create_organisation(cursor, organisation_name, address_line_1, address_line_
                         user_uuid):
     try:
 
-        org_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, organisation_name)
+        org_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
         logging.info("Creating Organisation...")
 
         # Step 1: Create organisation entry in database
@@ -60,7 +60,7 @@ def create_organisation(cursor, organisation_name, address_line_1, address_line_
             cursor.execute(sql,
                            (org_uuid, organisation_name,org_uuid, address_line_1, address_line_2, city, county, postcode, phone_number))
 
-            sql_audit = sql % (org_uuid, organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number)
+            sql_audit = sql % (org_uuid, organisation_name,org_uuid, address_line_1, address_line_2, city, county, postcode, phone_number)
 
             logging.info("Organisation entry created successfully.")
         except Exception as e:
@@ -169,12 +169,12 @@ def create_user_organisation_relation(cursor, user_uuid,org_uuid):
 def create_default_pool(cursor, organisation_name, org_uuid, user_uuid):
     try:
         logging.info("Creating new organisation default pool...")
-        pool_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, organisation_name)
+        pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
         # Step 1: Create default pool entry in database
         try:
             sql = f"""
                 INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} 
-                (poolUUID,organisationUUID, pool_name, parentid) 
+                (poolUUID,organisationUUID, pool_name, parentUUID) 
                 VALUES (%s,%s, %s, NULL)
             """
             cursor.execute(sql, (pool_uuid, org_uuid, f"{organisation_name} Default Pool"))
@@ -244,7 +244,7 @@ def add_user_to_pool(cursor, pool_uuid, org_uuid, user_uuid):
         try:
             get_inserted_row_sql = f"""
                 SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} 
-                WHERE poolUUID = %s AND userid = %s LIMIT 1
+                WHERE poolUUID = %s AND userUUID = %s LIMIT 1
             """
             cursor.execute(get_inserted_row_sql, (pool_uuid, user_uuid))
             last_inserted_row = cursor.fetchone()

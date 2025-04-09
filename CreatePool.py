@@ -31,7 +31,7 @@ max_pool_count = 100
 def count_pools(cursor, org_uuid):
     try:
         logging.info("Checking current org pool count...")
-        sql = f"SELECT count(DISTINCT poolUUID) FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationidUUID = %s"
+        sql = f"SELECT count(DISTINCT poolUUID) FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s"
         cursor.execute(sql, (org_uuid,))
         return cursor.fetchone()[0]
     except Exception as e:
@@ -43,8 +43,8 @@ def count_pools(cursor, org_uuid):
 def create_pool(cursor, pool_name, parent_uuid, org_uuid, user_uuid):
     try:
         logging.info("Creating pool...")
-        pool_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, pool_name)
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (poolUUID,organisationUUID, pool_name, parentid) VALUES (%s, %s, %s)"
+        pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, pool_name)
+        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (poolUUID,organisationUUID, pool_name, parentUUID) VALUES (%s, %s, %s, %s)"
         cursor.execute(sql, (pool_uuid,org_uuid, pool_name, parent_uuid))
         sql_audit = sql % (pool_uuid,org_uuid, pool_name, parent_uuid)
 

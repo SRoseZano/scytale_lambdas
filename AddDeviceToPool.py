@@ -89,7 +89,7 @@ def append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid ):
         logging.info("Executing SQL query to append device to pool...")
         # SQL query to add device to pool and its children
         sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceid, poolid)
+            INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID)
             WITH RECURSIVE PoolHierarchy AS (
                 SELECT parentUUID, poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_table']}

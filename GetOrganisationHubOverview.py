@@ -28,12 +28,12 @@ database_dict = zanolambdashelper.helpers.get_database_dict()
 
 print("gotten the dict")
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 print("gotten the client")
 
-
 zanolambdashelper.helpers.set_logging('INFO')
+
 
 def get_organisation_details(cursor, user_uuid):
     try:
@@ -42,7 +42,7 @@ def get_organisation_details(cursor, user_uuid):
             SELECT DISTINCT a.*, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
             JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
             ON a.organisationUUID = b.organisationUUID
-            AND b.userUUID = {user_uuid}
+            AND b.userUUID = '{user_uuid}'
             LIMIT 1
         """
         cursor.execute(organisation_details_sql)
@@ -62,6 +62,7 @@ def get_organisation_details(cursor, user_uuid):
         logging.error(f"Error fetching organisation details: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def get_organisation_users(cursor, org_uuid, organisation_details):
     try:
@@ -103,7 +104,6 @@ def get_organisation_users(cursor, org_uuid, organisation_details):
         raise Exception(400, e)
 
 
-
 def get_organisation_invite_code(cursor, org_uuid, organisation_details):
     try:
         logging.info("Getting organisation invite codes...")
@@ -111,7 +111,7 @@ def get_organisation_invite_code(cursor, org_uuid, organisation_details):
             organisation_invite_code_sql = current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             organisation_invite_code_sql = f"""SELECT DISTINCT invite_code 
                                                 FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} 
-                                                WHERE organisationUUID = {org_uuid} 
+                                                WHERE organisationUUID = '{org_uuid}'
                                                 AND valid_until >= NOW()
                                                 AND inviteID = 1
                                                 LIMIT 1"""
@@ -130,13 +130,14 @@ def get_organisation_invite_code(cursor, org_uuid, organisation_details):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def get_pool_details(cursor, org_uuid, user_uuid):
     try:
         logging.info("Getting pool details...")
         pools_sql = f"""
             SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
             FROM {database_dict['schema']}.{database_dict['pools_table']} a 
-            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = {user_uuid} and a.organisationUUID = {org_uuid}
+            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = '{user_uuid}' and a.organisationUUID = '{org_uuid}'
         """
         cursor.execute(pools_sql)
         pools_result = cursor.fetchall()
@@ -147,8 +148,10 @@ def get_pool_details(cursor, org_uuid, user_uuid):
             # Create a mapping of UUIDs to sequential integers
             uuid_to_int = {uuid: idx + 1 for idx, uuid in enumerate(pool_uuids)}
 
-            processed_result =  [(uuid_to_int[pool[0]], pool[0], pool[1], uuid_to_int.get(pool[2], None)) for pool in pools_result]
-            pools_details = {pool[0]: { 'Details': {'poolUUID': pool[1],'pool_name': pool[2], 'parentid': pool[3]}} for pool in processed_result}
+            processed_result = [(uuid_to_int[pool[0]], pool[0], pool[1], uuid_to_int.get(pool[2], None)) for pool in
+                                pools_result]
+            pools_details = {pool[0]: {'Details': {'poolUUID': pool[1], 'pool_name': pool[2], 'parentUUID': pool[3]}}
+                             for pool in processed_result}
             return pools_details
         else:
             return {}
@@ -156,6 +159,7 @@ def get_pool_details(cursor, org_uuid, user_uuid):
         logging.error(f"Error fetching pool details: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def get_pool_users(cursor, org_uuid, organisation_details, pools_details, user_uuid_to_id):
     try:
@@ -198,7 +202,6 @@ def get_pool_users(cursor, org_uuid, organisation_details, pools_details, user_u
         raise Exception(400, e)
 
 
-
 def merge_pools_users_devices(pool_details, pools_users, pools_devices):
     try:
         logging.info("Merging pools, users, and devices...")
@@ -217,6 +220,7 @@ def merge_pools_users_devices(pool_details, pools_users, pools_devices):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
     try:
         logging.info("Getting device details...")
@@ -224,7 +228,7 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             devices_details_sql = f"""
                 SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
                 FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                WHERE organisationUUID = {org_uuid}
+                WHERE organisationUUID = '{org_uuid}'
             """
             cursor.execute(devices_details_sql)
             devices_details_result = cursor.fetchall()
@@ -254,10 +258,10 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             devices_details_sql = f"""
                SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
                 FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = {org_uuid}
-                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = {user_uuid}
+                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = '{org_uuid}'
+                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = '{user_uuid}'
                 JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID and d.parentUUID IS NOT NULL
-                
+
             """
             cursor.execute(devices_details_sql)
             devices_details_result = cursor.fetchall()
@@ -287,6 +291,7 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
         logging.error(f"Error fetching device details: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def get_pools_devices(cursor, device_uuid_to_id):
     try:
@@ -321,7 +326,6 @@ def get_pools_devices(cursor, device_uuid_to_id):
         raise Exception(400, e)
 
 
-
 def get_hub_details(cursor, org_uuid, organisation_details):
     try:
         logging.info("Getting hub details...")
@@ -329,7 +333,7 @@ def get_hub_details(cursor, org_uuid, organisation_details):
             hub_details_sql = f"""
                 SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id
                 FROM {database_dict['schema']}.{database_dict['hubs_table']} a 
-                WHERE organisationUUID = {org_uuid}
+                WHERE organisationUUID = '{org_uuid}'
             """
             cursor.execute(hub_details_sql)
             hub_details_result = cursor.fetchall()
@@ -340,7 +344,9 @@ def get_hub_details(cursor, org_uuid, organisation_details):
                 # Create a mapping of UUIDs to sequential integers
                 uuid_to_int = {uuid: idx + 1 for idx, uuid in enumerate(hub_uuids)}
 
-                hub_details = {uuid_to_int[hub[0]]: { 'Details': {'hubUUID': hub[0],'serial': hub[1],'hub_name': hub[2],'registrant': hub[3], 'device_type_id': hub[4]}} for hub in hub_details_result}
+                hub_details = {uuid_to_int[hub[0]]: {
+                    'Details': {'hubUUID': hub[0], 'serial': hub[1], 'hub_name': hub[2], 'registrant': hub[3],
+                                'device_type_id': hub[4]}} for hub in hub_details_result}
                 return hub_details
             else:
                 return {}
@@ -351,10 +357,12 @@ def get_hub_details(cursor, org_uuid, organisation_details):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
@@ -362,38 +370,39 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         with conn.cursor() as cursor:
-                user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-                organisation_details  = get_organisation_details(cursor, user_uuid)
-                if organisation_details:
-                    organisation_id = organisation_details['organisationID']
-                    organisation_users, user_uuid_to_id = get_organisation_users(cursor, organisation_id,
-                                                                                 organisation_details)
-                    organisation_invite_code = get_organisation_invite_code(cursor,organisation_id, organisation_details)
-                    device_details, device_uuid_to_id = get_device_details(cursor, organisation_id,
-                                                                           organisation_details, user_uuid)
-                    device_details = get_device_details(cursor, organisation_id, organisation_details, user_uuid)
-                    pools_details = get_pool_details(cursor, organisation_id, user_uuid)
-                    pools_users = get_pool_users(cursor, organisation_id, organisation_details, pools_details,
-                                                 user_uuid_to_id)
-                    pools_devices = get_pools_devices(cursor, device_uuid_to_id)
-                    pools_merged = merge_pools_users_devices(pools_details, pools_users, pools_devices)
-                    hub_details = get_hub_details(cursor, organisation_id, organisation_details)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
+                                                                            database_dict['users_table'], user_email)
+            organisation_details = get_organisation_details(cursor, user_uuid)
+            if organisation_details:
+                organisation_uuid = organisation_details['organisationUUID']
+                organisation_users, user_uuid_to_id = get_organisation_users(cursor, organisation_uuid,
+                                                                             organisation_details)
+                organisation_invite_code = get_organisation_invite_code(cursor, organisation_uuid, organisation_details)
+                device_details, device_uuid_to_id = get_device_details(cursor, organisation_uuid,
+                                                                       organisation_details, user_uuid)
+                device_details = get_device_details(cursor, organisation_uuid, organisation_details, user_uuid)
+                pools_details = get_pool_details(cursor, organisation_uuid, user_uuid)
+                pools_users = get_pool_users(cursor, organisation_uuid, organisation_details, pools_details,
+                                             user_uuid_to_id)
+                pools_devices = get_pools_devices(cursor, device_uuid_to_id)
+                pools_merged = merge_pools_users_devices(pools_details, pools_users, pools_devices)
+                hub_details = get_hub_details(cursor, organisation_uuid, organisation_details)
 
-                    output_dict = {
-                        "organisationInfo": organisation_details,
-                        "organisationUsers": organisation_users,
-                        "organisationInviteCode": organisation_invite_code,
-                        "Pools": pools_merged,
-                        "Devices": device_details,
-                        "Hubs": hub_details
-                    }
-                else:
-                    output_dict = {}
+                output_dict = {
+                    "organisationInfo": organisation_details,
+                    "organisationUsers": organisation_users,
+                    "organisationInviteCode": organisation_invite_code,
+                    "Pools": pools_merged,
+                    "Devices": device_details,
+                    "Hubs": hub_details
+                }
+            else:
+                output_dict = {}
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422: # if 422 then validation error
+        if status_value == 422:  # if 422 then validation error
             body_value = e.args[1]
         else:
             body_value = 'Unable to retrive organisation details'
@@ -416,5 +425,5 @@ def lambda_handler(event, context):
         return {'statusCode': 200, 'body': output_dict}
 
 
-           
+
 

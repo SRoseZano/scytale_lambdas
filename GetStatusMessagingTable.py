@@ -42,9 +42,13 @@ def get_status_table(cursor):
         columns = [desc[0] for desc in cursor.description]
 
         if status_lookup_result:
-            status_lookup_result_list = dict(zip(columns, status_lookup_result))
+            status_lookup_result_dict = {}
+            for row in status_lookup_result:
+                row_dict = dict(zip(columns[1:], row[1:]))
+                status_code = row[0]
+                status_lookup_result_dict[status_code] = row_dict
 
-            return status_lookup_result_list
+            return status_lookup_result_dict
         else:
             return {}
     except Exception as e:

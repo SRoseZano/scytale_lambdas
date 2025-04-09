@@ -75,14 +75,14 @@ def lambda_handler(event, context):
     
     try:
         with conn.cursor() as cursor:
-             
+            user_uuid = zanolambdashelper.helpers.generate_time_based_uuid(first_name, email)
             sql = f"""
                 INSERT INTO {database_dict['schema']}.{database_dict['users_table']} 
-                (email, first_name, last_name, birthdate, zone_info, locale) 
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (userUUID, email, first_name, last_name, birthdate, zone_info, locale) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             
-            cursor.execute(sql, (email, first_name, last_name, birthdate,zoneinfo,locale))
+            cursor.execute(sql, (user_uuid, email, first_name, last_name, birthdate,zoneinfo,locale))
             conn.commit()
             
     except Exception as e:

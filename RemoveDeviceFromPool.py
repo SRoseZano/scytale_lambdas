@@ -54,7 +54,7 @@ def delete_device_from_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
                     JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
                 )
                 SELECT poolUUID FROM PoolHierarchy
-            ) AND deviceid = %s;
+            ) AND deviceUUID = %s;
         """
         cursor.execute(sql, (pool_uuid, device_uuid,))
 

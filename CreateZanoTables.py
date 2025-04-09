@@ -91,7 +91,7 @@ def lambda_handler(event, context):
                     audit_id SERIAL PRIMARY KEY, 
                     table_name VARCHAR(100),    
                     operation_type INT,  
-                    record_id INT,               
+                    record_id VARCHAR(36),               
                     sql_query TEXT,               
                     old_payload JSON,             
                     new_payload JSON,              
@@ -139,7 +139,7 @@ def lambda_handler(event, context):
                 postcode VARCHAR(20) NOT NULL,
                 phone_no VARCHAR(15) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (organisationUUID),
+                PRIMARY KEY (organisationUUID)
             );
             """
             cursor.execute(create_organisation_table)
@@ -148,7 +148,7 @@ def lambda_handler(event, context):
             create_pools_table = """
             CREATE TABLE pools (
                 poolUUID VARCHAR(36) NOT NULL,
-                organisationUUID INT NOT NULL,
+                organisationUUID VARCHAR(36) NOT NULL,
                 pool_name VARCHAR(100) NOT NULL,
                 parentUUID VARCHAR(36),
                 PRIMARY KEY (poolUUID),
@@ -189,11 +189,11 @@ def lambda_handler(event, context):
             create_organisation_invite_table = """
             CREATE TABLE organisation_invites (
                 invite_code VARCHAR(6) PRIMARY KEY,
-                organisationID INT NOT NULL,
+                organisationUUID VARCHAR(36) NOT NULL,
                 target_email VARCHAR(255),
                 inviteID INT NOT NULL,
                 valid_until TIMESTAMP,
-                FOREIGN KEY (organisationID) REFERENCES organisations(organisationID) ON DELETE CASCADE,
+                FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
                 FOREIGN KEY (inviteID) REFERENCES invite_lookup(inviteID) ON DELETE CASCADE
             )
             """

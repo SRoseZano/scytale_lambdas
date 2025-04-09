@@ -109,7 +109,7 @@ def generate_hub_invite(auth_token):
 def create_hub(cursor, serial, registrant, hub_name, org_uuid, user_uuid):
     try:
 
-        hub_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, hub_name)
+        hub_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, hub_name)
         logging.info("Creating hub entry...")
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (hubUUID, serial, registrant, hub_name, organisationUUID, device_type_id, current_firmware) \
                 VALUES (%s,%s, %s, %s, %s, %s, %s)"
@@ -120,7 +120,7 @@ def create_hub(cursor, serial, registrant, hub_name, org_uuid, user_uuid):
         # Fetch and log the inserted row
         try:
             get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']} 
-                                       WHERE hubid = %s """
+                                       WHERE hubUUID = %s """
             cursor.execute(get_inserted_row_sql, (hub_uuid,))
             last_inserted_row = cursor.fetchone()
 

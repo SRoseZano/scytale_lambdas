@@ -60,9 +60,9 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
                    org_uuid, user_uuid):
     try:
         logging.info("Creating device entry...")
-        device_uuid = zanolambdashelper.generate_time_based_uuid(user_uuid, device_name)
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
-                VALUES (%s, %s, %s, %s,%s, %s, %s)"
+        device_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, device_name)
+        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (deviceUUID, long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
+                VALUES (%s,%s, %s, %s, %s,%s, %s, %s)"
         cursor.execute(sql, (
         long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid))
 

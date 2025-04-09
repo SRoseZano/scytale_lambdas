@@ -35,16 +35,18 @@ print("gotten the client")
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def get_organisation_details(cursor, login_user_id):
+def get_organisation_details(cursor, user_uuid):
     try:
         logging.info("Getting organisation details...")
         organisation_details_sql = f"""
             SELECT DISTINCT a.*, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
             JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
             ON a.organisationUUID = b.organisationUUID
-            AND b.userUUID = {login_user_id}
+            AND b.userUUID = '{user_uuid}'
             LIMIT 1
         """
+
+        print(organisation_details_sql)
         cursor.execute(organisation_details_sql)
         organisation_details_result = cursor.fetchall()
 
@@ -74,7 +76,7 @@ def get_organisation_users(cursor, organisation_uuid, organisation_details):
                 JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
                 ON a.userUUID = b.userUUID
                 AND a.hub_user = 0
-                AND b.organisationUUID = {organisation_uuid}
+                AND b.organisationUUID = '{organisation_uuid}'
             """
             cursor.execute(organisation_users_sql)
             organisation_users_result = cursor.fetchall()
@@ -97,7 +99,7 @@ def get_organisation_invite_code(cursor, organisation_uuid, organisation_details
             organisation_invite_code_sql = current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             organisation_invite_code_sql = f"""SELECT DISTINCT invite_code 
                                                 FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} 
-                                                WHERE organisationUUID = {organisation_uuid} 
+                                                WHERE organisationUUID = '{organisation_uuid}' 
                                                 AND valid_until >= NOW()
                                                 AND inviteID = 1
                                                 LIMIT 1"""
@@ -123,16 +125,16 @@ def get_pool_details(cursor, organisation_uuid, user_uuid):
         pools_sql = f"""
             SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
             FROM {database_dict['schema']}.{database_dict['pools_table']} a 
-            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = {user_uuid} and a.organisationUUID = {organisation_uuid}
+            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = '{user_uuid}' and a.organisationUUID = '{organisation_uuid}'
         """
         cursor.execute(pools_sql)
         pools_result = cursor.fetchall()
 
         if pools_result:
             pool_ids = {pool[0] for pool in pools_result}
-            processed_result = [(pool[0], pool[1], pool[2], pool[3] if pool[3] in pool_ids else None,) for pool in
+            processed_result = [(pool[0], pool[1], pool[2] if pool[2] in pool_ids else None,) for pool in
                                 pools_result]
-            pools_details = {pool[0]: {'Details': {'pool_name': pool[1], 'parentid': pool[2]}} for
+            pools_details = {pool[0]: {'Details': {'pool_name': pool[1], 'parentUUID': pool[2]}} for
                              pool in processed_result}
             return pools_details
         else:
@@ -152,7 +154,7 @@ def get_pool_users(cursor, organisation_details, pools_details):
                 FROM {database_dict['schema']}.{database_dict['users_table']} a
                 JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b
                 ON a.userUUID = b.userUUID
-                AND poolUUID IN ({','.join(map(str, list(pools_details.keys())))})
+                AND poolUUID IN ({','.join(repr(k) for k in pools_details.keys())})
                 AND a.hub_user = 0
             """
             cursor.execute(pools_users_sql)
@@ -206,7 +208,7 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             devices_details_sql = f"""
                 SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
                 FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                WHERE organisationid = {org_uuid}
+                WHERE organisationUUID = '{org_uuid}'
             """
             cursor.execute(devices_details_sql)
             devices_details_result = cursor.fetchall()
@@ -224,8 +226,8 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             devices_details_sql = f"""
                SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
                 FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = {org_uuid}
-                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = {user_uuid}
+                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = '{org_uuid}'
+                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = '{user_uuid}'
                 JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID and d.parentUUID IS NOT NULL
 
             """
@@ -253,7 +255,8 @@ def get_pools_devices(cursor, device_details):
             devices_pools_sql = f"""
                 SELECT DISTINCT a.deviceUUID, a.poolUUID
                 FROM {database_dict['schema']}.{database_dict['pools_devices_table']} a
-                WHERE deviceUUID IN ({','.join([f"'{device_uuid}'" for device_uuid in device_details.keys()])})
+                WHERE deviceUUID IN ({','.join(repr(device_uuid) for device_uuid in device_details.keys())})
+
             """
             cursor.execute(devices_pools_sql)
             devices_pools_result = cursor.fetchall()
@@ -299,7 +302,7 @@ def get_hub_details(cursor, org_uuid, organisation_details):
             hub_details_sql = f"""
                 SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id
                 FROM {database_dict['schema']}.{database_dict['hubs_table']} a 
-                WHERE organisationUUID = {org_uuid}
+                WHERE organisationUUID = '{org_uuid}'
             """
             cursor.execute(hub_details_sql)
             hub_details_result = cursor.fetchall()
@@ -331,21 +334,21 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         with conn.cursor() as cursor:
-            login_user_id, user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                                            database_dict['schema'],
                                                                                            database_dict['users_table'],
                                                                                            user_email)
-            organisation_details = get_organisation_details(cursor, login_user_id)
+            organisation_details = get_organisation_details(cursor, user_uuid)
             if organisation_details:
-                organisation_id = organisation_details['organisationID']
-                organisation_users = get_organisation_users(cursor, organisation_id, organisation_details)
-                organisation_invite_code = get_organisation_invite_code(cursor, organisation_id, organisation_details)
-                device_details = get_device_details(cursor, organisation_id, organisation_details, login_user_id)
-                pools_details = get_pool_details(cursor, organisation_id, login_user_id)
+                organisation_uuid = organisation_details['organisationUUID']
+                organisation_users = get_organisation_users(cursor, organisation_uuid, organisation_details)
+                organisation_invite_code = get_organisation_invite_code(cursor, organisation_uuid, organisation_details)
+                device_details = get_device_details(cursor, organisation_uuid, organisation_details, user_uuid)
+                pools_details = get_pool_details(cursor, organisation_uuid, user_uuid)
                 pools_users = get_pool_users(cursor, organisation_details, pools_details)
                 pools_devices = get_pools_devices(cursor, device_details)
                 pools_merged = merge_pools_users_devices(pools_details, pools_users, pools_devices)
-                hub_details = get_hub_details(cursor, organisation_id, organisation_details)
+                hub_details = get_hub_details(cursor, organisation_uuid, organisation_details)
 
                 output_dict = {
                     "organisationInfo": organisation_details,

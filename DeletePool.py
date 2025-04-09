@@ -94,7 +94,7 @@ def lambda_handler(event, context):
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        pool_uuid = variables['pool_id']['value']
+        pool_uuid = variables['pool_uuid']['value']
 
         with conn.cursor() as cursor:
 
