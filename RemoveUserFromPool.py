@@ -68,11 +68,8 @@ def has_permissions_to_remove_target(cursor, user_uuid, target_user_uuid, org_uu
         traceback.print_exc()
         raise Exception(400, e)
 
-    if login_user_permissions[0] >= target_user_permissions[0]:
-        print(login_user_permissions[0])
-        print(target_user_permissions[0])
-        raise Exception(402, "Cannot remove a user of same permission status from group, please demote user first")
-
+    if target_user_permissions[0] < 3 or login_user_permissions[0] > 2:
+        raise Exception(402, "Insufficient permissions to remove user from group")
 
 def remove_user_from_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
     try:

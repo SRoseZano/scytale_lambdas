@@ -149,7 +149,7 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         # Extract relevant attributes
-        user_uuid_raw = body_json.get('user_id')
+        user_uuid_raw = body_json.get('user_uuid')
 
         variables = {
             'user_uuid': {'value': user_uuid_raw['value'], 'value_type': user_uuid_raw['value_type']},
@@ -162,14 +162,15 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
+
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],

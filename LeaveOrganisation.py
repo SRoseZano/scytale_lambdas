@@ -21,12 +21,15 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
-lambda_client =  zanolambdashelper.helpers.create_client('lambda') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
+lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 policy_detach_lambda = "DetachPolicy"
 
-def is_user_admin(cursor,user_uuid, org_uuid):
+zanolambdashelper.helpers.set_logging('INFO')
+
+
+def is_user_admin(cursor, user_uuid, org_uuid):
     try:
         logging.info("Executing SQL query to check is user is admin of organisation...")
         sql = f"""
@@ -36,28 +39,30 @@ def is_user_admin(cursor,user_uuid, org_uuid):
             """
         cursor.execute(sql, (org_uuid, user_uuid))
         return cursor.fetchone()[0]
-    
+
     except Exception as e:
         logging.error(f"Error checking user is an admin of organisation: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
 
-def get_org_admin_count(cursor, org_uuid):
+
+def get_org_admin_count(cursor, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to check amount of admins in organisation...")
         sql = f"""
             SELECT COUNT(DISTINCT a.userUUID)
             FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
             JOIN {database_dict['schema']}.{database_dict['users_table']} b ON a.userUUID = b.userUUID
-            WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0
+            WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0 AND a.userUUID <> %s
             """
-        cursor.execute(sql, (org_uuid,))
+        cursor.execute(sql, (org_uuid, user_uuid))
         return cursor.fetchone()[0]
-    
+
     except Exception as e:
         logging.error(f"Error counting admin users in organisation: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
+
 
 def remove_user_from_organisation(cursor, org_uuid, user_uuid):
     try:
@@ -98,7 +103,7 @@ def remove_user_from_organisation(cursor, org_uuid, user_uuid):
                                       INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID AND p.userUUID = %s AND a.organisationUUID = %s
                       """
         cursor.execute(get_entry, (user_uuid, org_uuid))
-        last_inserted_row = cursor.fetchone()
+        last_inserted_row = cursor.fetchall()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
             historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
@@ -106,7 +111,6 @@ def remove_user_from_organisation(cursor, org_uuid, user_uuid):
             logging.error("No row found before update for audit logs.")
             raise ValueError("Inital row not found for audit log.")
 
-        
         logging.info("Executing SQL query to remove user from any of the organisation pools...")
         sql = f"""
             DELETE p
@@ -123,11 +127,12 @@ def remove_user_from_organisation(cursor, org_uuid, user_uuid):
             historic_row_json, '{}', org_uuid, user_uuid
         )
         logging.info("Audit log submitted successfully.")
-    
+
     except Exception as e:
         logging.error(f"Error removing user from organisation: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
+
 
 def retrieve_org_policy(cursor, org_uuid):
     try:
@@ -137,13 +142,14 @@ def retrieve_org_policy(cursor, org_uuid):
         cursor.execute(sql, (org_uuid,))
         result = cursor.fetchone()
         policy_name = result[0]
-        
+
         return policy_name
-    
+
     except Exception as e:
         logging.error(f"Error retrieving policy: {e}")
         traceback.print_exc()
-        raise Exception(400,e) from e
+        raise Exception(400, e) from e
+
 
 def retrieve_user_identity(cursor, user_uuid):
     try:
@@ -152,21 +158,22 @@ def retrieve_user_identity(cursor, user_uuid):
         cursor.execute(sql, (user_uuid,))
         result = cursor.fetchone()
         identity = result[0]
-        
+
         return identity
-    
+
     except Exception as e:
         logging.error(f"Error retrieving identity: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
 
+
 def detach_org_policy(cursor, org_uuid, user_uuid):
     try:
         policy_name = retrieve_org_policy(cursor, org_uuid)
         user_identity = retrieve_user_identity(cursor, user_uuid)
-        
+
         print(policy_name, user_identity)
-        
+
         logging.info("Detaching IoT policy to user identity...")
 
         # Run policy attach lambda
@@ -185,51 +192,57 @@ def detach_org_policy(cursor, org_uuid, user_uuid):
             logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
             traceback.print_exc()
             raise Exception(400, {response_payload})
-    
+
     except Exception as e:
         logging.error(f"Error detaching user from policy: {e}")
         traceback.print_exc()
         raise Exception(400, e) from e
 
 
-
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
-        conn.autocommit = False 
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
+        conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-       
         user_uuid_raw = body_json.get('user_uuid')
-        
-        
+
         variables = {
             'user_uuid': {'value': user_uuid_raw['value'], 'value_type': user_uuid_raw['value_type']},
         }
-        
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
-        
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+
         target_user_uuid = variables['user_uuid']['value']
 
         with conn.cursor() as cursor:
-            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
-            zanolambdashelper.helpers.is_target_user_in_org(cursor,database_dict['schema'],database_dict['users_organisations_table'], org_uuid, user_uuid)
-            user_admin_status = is_user_admin(cursor,user_uuid,org_uuid)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
+                                                                            database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
+            zanolambdashelper.helpers.is_target_user_in_org(cursor, database_dict['schema'],
+                                                            database_dict['users_organisations_table'], org_uuid,
+                                                            user_uuid)
+            user_admin_status = is_user_admin(cursor, user_uuid, org_uuid)
             if user_admin_status > 0:
-                if get_org_admin_count(cursor,org_uuid) == 1:
-                    logging.error(f"Unable to leave organisation as last admin, either promote another user to admin or delete your organisation")
-                    raise Exception(403, "Unable to leave organisation as last admin, either promote another user to admin or delete your organisation")
-                
+                if get_org_admin_count(cursor, org_uuid, user_uuid) == 0:
+                    logging.error(
+                        f"Unable to leave organisation as last admin, either promote another user to admin or delete your organisation")
+                    raise Exception(403,
+                                    "Unable to leave organisation as last admin, either promote another user to admin or delete your organisation")
+
             if user_uuid == target_user_uuid:
                 remove_user_from_organisation(cursor, org_uuid, user_uuid)
-                detach_org_policy(cursor,org_uuid,user_uuid)
+                detach_org_policy(cursor, org_uuid, user_uuid)
             else:
                 logging.error(f"User is trying to leave under another users id")
                 raise Exception(400, "User is trying to leave under another users id")
@@ -238,7 +251,7 @@ def lambda_handler(event, context):
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422 or status_value == 403: # if 422 then validation error
+        if status_value == 422 or status_value == 403:  # if 422 then validation error
             body_value = e.args[1]
         else:
             body_value = 'Unable to leave organisation'
@@ -247,7 +260,7 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

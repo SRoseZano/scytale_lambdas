@@ -26,17 +26,19 @@ lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 policy_detach_lambda = "DetachPolicy"
 
+zanolambdashelper.helpers.set_logging('INFO')
 
-def get_org_owner_count(cursor, organisation_uuid):
+
+def get_org_owner_count(cursor, organisation_uuid, user_uuid):
     try:
-        logging.info("Executing SQL query to check amount of owners in organisation...")
+        logging.info("Executing SQL query to check amount of owners in organisation other than self...")
         sql = f"""
             SELECT COUNT(DISTINCT a.userUUID)
             FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
             JOIN {database_dict['schema']}.{database_dict['users_table']} b ON a.userUUID = b.userUUID
-            WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0
+            WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0 AND a.userUUID <> %s
             """
-        cursor.execute(sql, (organisation_uuid,))
+        cursor.execute(sql, (organisation_uuid, user_uuid,))
         return cursor.fetchone()[0]
 
     except Exception as e:
@@ -256,7 +258,7 @@ def lambda_handler(event, context):
                                                             target_user_uuid)
 
             if get_org_owner_count(cursor,
-                                   org_uuid) == 1 and user_uuid == target_user_uuid:  # if removing yourself and there is only 1 owner left block leave
+                                   org_uuid, target_user_uuid) == 0:  # if removing yourself would leave 0 owners block
                 logging.error(
                     f"Unable to leave organisation as last owner, either promote another user to owner or delete your organisation")
                 raise Exception(403,
