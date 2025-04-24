@@ -64,10 +64,10 @@ def create_device(cursor, long_address, short_address, device_type_id, associate
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (deviceUUID, long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
                 VALUES (%s,%s, %s, %s, %s,%s, %s, %s)"
         cursor.execute(sql, (
-        long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid))
+        device_uuid, long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid))
 
         sql_audit = sql % (
-        long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid)
+        device_uuid, long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid)
 
 
         get_entry = f"""

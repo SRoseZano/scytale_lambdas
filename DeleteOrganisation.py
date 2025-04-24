@@ -159,7 +159,7 @@ def lambda_handler(event, context):
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
             
             #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
+            zanolambdashelper.helpers.is_user_org_owner(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
 
             user_identities = get_user_identities(cursor,  org_uuid)
             policy_name = get_associated_policy(cursor,org_uuid)

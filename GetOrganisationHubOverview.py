@@ -380,7 +380,6 @@ def lambda_handler(event, context):
                 organisation_invite_code = get_organisation_invite_code(cursor, organisation_uuid, organisation_details)
                 device_details, device_uuid_to_id = get_device_details(cursor, organisation_uuid,
                                                                        organisation_details, user_uuid)
-                device_details = get_device_details(cursor, organisation_uuid, organisation_details, user_uuid)
                 pools_details = get_pool_details(cursor, organisation_uuid, user_uuid)
                 pools_users = get_pool_users(cursor, organisation_uuid, organisation_details, pools_details,
                                              user_uuid_to_id)
