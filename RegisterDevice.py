@@ -28,6 +28,28 @@ zanolambdashelper.helpers.set_logging('INFO')
 max_org_devices = 500
 
 
+def generate_unique_short_address(cursor, org_uuid):
+    existing_short_addresses_query = f"""
+        SELECT DISTINCT a.short_address
+        FROM {database_dict['schema']}.{database_dict['devices_table']} a
+        WHERE a.organisationUUID = %s
+    """
+    cursor.execute(existing_short_addresses_query, (org_uuid,))
+    existing_short_addresses = set(row[0].upper() for row in cursor.fetchall())
+
+    attempt = 0
+    while True:
+        # Generate random number between 0 and 65535, format as 4-digit hex (uppercase)
+        short_address = format(random.randint(0, 65535), '04X')
+        if short_address not in existing_short_addresses:
+            return short_address
+        attempt += 1
+        if attempt > 10000:
+            raise Exception("Unable to generate a unique short address after many attempts.")
+
+
+
+
 def get_org_device_count(cursor, org_uuid):
     try:
         logging.info("Fetching org device count...")
@@ -145,14 +167,12 @@ def lambda_handler(event, context):
 
         device_name_raw = body_json.get('device_name')
         long_address_raw = body_json.get('long_address')
-        short_address_raw = body_json.get('short_address')
         device_type_id_raw = body_json.get('device_type_id')
         associated_hub_raw = body_json.get('associated_hub')
 
         variables = {
             'device_name': {'value': device_name_raw['value'], 'value_type': 'string_input'},
             'long_address': {'value': long_address_raw['value'], 'value_type': 'long_address'},
-            'short_address': {'value': short_address_raw['value'], 'value_type': 'short_address'},
             'device_type_id': {'value': device_type_id_raw['value'], 'value_type': 'id'},
             'associated_hub': {'value': associated_hub_raw['value'], 'value_type': 'mac_address'},
         }
@@ -162,7 +182,6 @@ def lambda_handler(event, context):
 
         device_name = variables['device_name']['value']
         long_address = variables['long_address']['value']
-        short_address = variables['short_address']['value']
         device_type_id = variables['device_type_id']['value']
         associated_hub = variables['associated_hub']['value']
 
@@ -188,7 +207,7 @@ def lambda_handler(event, context):
                 logging.error("Org is at device limit...")
                 raise Exception(403, f"You have reached your organisations device limit of {max_org_devices}")
 
-
+            short_address = generate_unique_short_address(cursor, org_uuid)
             device_uuid = create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email,
                                       device_name, org_uuid, user_uuid)
             pool_uuid = get_default_pool_id(cursor, org_uuid)
@@ -220,5 +239,6 @@ def lambda_handler(event, context):
     return {
         'statusCode': 200,
         'body': 'Device Added Successfully',
-        'device_topic': device_topic
+        'device_topic': device_topic,
+        'short_addr': short_address
     }
