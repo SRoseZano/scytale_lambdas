@@ -408,18 +408,18 @@ def lambda_handler(event, context):
 
         variables = {
             'organisation_name': {'value': organisation_name_raw['value'],
-                                  'value_type': organisation_name_raw['value_type']},
-            'address_line_1': {'value': address_line_1_raw['value'], 'value_type': address_line_1_raw['value_type']},
-            'city': {'value': city_raw['value'], 'value_type': city_raw['value_type']},
-            'county': {'value': county_raw['value'], 'value_type': county_raw['value_type']},
-            'postcode': {'value': postcode_raw['value'], 'value_type': postcode_raw['value_type']},
-            'phone_number': {'value': phone_number_raw['value'], 'value_type': phone_number_raw['value_type']},
-            'user_identity': {'value': user_identity_raw['value'], 'value_type': user_identity_raw['value_type']}
+                                  'value_type': 'string_input'},
+            'address_line_1': {'value': address_line_1_raw['value'], 'value_type': 'string_input'},
+            'city': {'value': city_raw['value'], 'value_type': 'string_input'},
+            'county': {'value': county_raw['value'], 'value_type': 'string_input'},
+            'postcode': {'value': postcode_raw['value'], 'value_type': 'postcode_input'},
+            'phone_number': {'value': phone_number_raw['value'], 'value_type': 'phone_number_input'},
+            'user_identity': {'value': user_identity_raw['value'], 'value_type': 'string_input'}
         }
 
         if address_line_2_raw['value']:  # add optionals if exists
             variables['address_line_2'] = {'value': address_line_2_raw['value'],
-                                           'value_type': address_line_2_raw['value_type']}
+                                           'value_type': 'string_input'}
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)

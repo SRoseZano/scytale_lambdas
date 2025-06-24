@@ -218,8 +218,8 @@ def lambda_handler(event, context):
         serial_raw = body_json.get('serial')
 
         variables = {
-            'hub_name': {'value': hub_name_raw['value'], 'value_type': hub_name_raw['value_type']},
-            'serial': {'value': serial_raw['value'], 'value_type': serial_raw['value_type']},
+            'hub_name': {'value': hub_name_raw['value'], 'value_type': 'string_input'},
+            'serial': {'value': serial_raw['value'], 'value_type': 'mac_address'},
         }
 
         logging.info("Validating and cleansing user inputs...")

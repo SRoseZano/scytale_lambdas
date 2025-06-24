@@ -11,7 +11,6 @@ import random
 import string
 import zanolambdashelper
 
-
 database_details = zanolambdashelper.helpers.get_db_details()
 
 rds_host = database_details['rds_host']
@@ -22,7 +21,7 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
@@ -32,7 +31,7 @@ def generate_code():
 
 
 def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
-    #parse to int
+    # parse to int
     invite_type_id = int(invite_type_id)
     code = generate_code()
     max_attempts = 5
@@ -44,7 +43,7 @@ def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
             delete_sql = f"DELETE FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE organisationUUID = %s AND inviteID = %s"
             cursor.execute(delete_sql, (organisation_uuid, invite_type_id))
             logging.info("Deleted existing invite code for the organization.")
-            
+
             if invite_type_id == 1:
                 sql = f"INSERT INTO {database_dict['schema']}.{database_dict['organisation_invites_table']} (invite_code, organisationUUID, target_email, inviteID, valid_until) " \
                       f"VALUES (%s, %s, NULL, %s, DATE_ADD(NOW(), INTERVAL 30 MINUTE))"
@@ -74,42 +73,47 @@ def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
     return code
 
 
-
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
-        conn.autocommit = False 
-    
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
+        conn.autocommit = False
+
         auth_token = event['params']['header']['Authorization']
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-
         invite_type_id_raw = body_json.get('invite_type_id')
         target_email_raw = body_json.get('target_email', None)
-        
+
         variables = {
-            'invite_type_id': {'value': invite_type_id_raw['value'], 'value_type': invite_type_id_raw['value_type']},
+            'invite_type_id': {'value': invite_type_id_raw['value'], 'value_type': 'id'},
         }
-        
-        if target_email_raw: #add optionals if exists
-            variables['target_email'] = {'value': target_email_raw['value'], 'value_type': target_email_raw['value_type']}
-        
+
+        if target_email_raw:  # add optionals if exists
+            variables['target_email'] = {'value': target_email_raw['value'],
+                                         'value_type': target_email_raw['value_type']}
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         invite_type_id = variables['invite_type_id']['value']
         target_email = variables['target_email']['value'] if target_email_raw else None
 
         with conn.cursor() as cursor:
-            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
-            
-            #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
-           
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
+                                                                            database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
+
+            # validate precursors to running this command
+            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], user_uuid, org_uuid)
+
             logging.info("Appending new invite code...")
             generated_code = append_invite(cursor, org_uuid, invite_type_id, target_email)
             conn.commit()
@@ -117,7 +121,7 @@ def lambda_handler(event, context):
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
         status_value = e.args[0]
-        if status_value == 422: # if 422 then validation 
+        if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
             body_value = 'Unable to generate invite'
@@ -126,14 +130,14 @@ def lambda_handler(event, context):
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()
             conn.close()
         except NameError:  # catch potential error before cursor or conn is defined
             pass
-    
+
     return {
         'statusCode': 200,
         'body': 'Invite Generated Successfully',

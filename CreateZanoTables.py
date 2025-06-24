@@ -72,7 +72,8 @@ def lambda_handler(event, context):
                 audit_operation_lookup,
                 warning_lookup,
                 status_type_lookup,
-                status_lookup
+                status_lookup,
+                hub_radios
 
             """
             cursor.execute(drop_tables)
@@ -252,7 +253,7 @@ def lambda_handler(event, context):
                 deviceUUID VARCHAR(36) NOT NULL,
                 long_address VARCHAR(16) NOT NULL,
                 short_address VARCHAR(4) NOT NULL,
-                associated_hub VARCHAR(64) NOT NULL,
+                associated_hub VARCHAR(36) NOT NULL,
                 registrant VARCHAR(255) NOT NULL,
                 device_name VARCHAR(255) NOT NULL,
                 organisationUUID VARCHAR(36) NOT NULL,
@@ -262,7 +263,7 @@ def lambda_handler(event, context):
                 UNIQUE (short_address),
                 FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
                 FOREIGN KEY (device_type_ID) REFERENCES device_lookup(device_type_ID) ON DELETE CASCADE,
-                FOREIGN KEY (associated_hub) REFERENCES hubs(serial) ON DELETE CASCADE
+                FOREIGN KEY (associated_hub) REFERENCES hubs(hubUUID) ON DELETE CASCADE
             );
 
             """
@@ -303,6 +304,20 @@ def lambda_handler(event, context):
                         );
                         """
             cursor.execute(create_status_table)
+
+            # Create hub radio table
+            create_hub_radios_table = """
+                                        CREATE TABLE hub_radios (
+                                        hubUUID VARCHAR(36) NOT NULL,
+                                        long_address VARCHAR(16) NOT NULL,
+                                        short_address VARCHAR(4) NOT NULL,
+                                        PRIMARY KEY (hubUUID, long_address),
+                                        FOREIGN KEY (hubUUID) REFERENCES hubs(hubUUID) ON DELETE CASCADE,
+                                        INDEX (hubUUID)
+                                    );
+                                    """
+
+            cursor.execute(create_hub_radios_table)
 
 
 

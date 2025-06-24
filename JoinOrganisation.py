@@ -316,8 +316,8 @@ def lambda_handler(event, context):
         user_identity_raw = body_json.get('user_identity')
 
         variables = {
-            'invite_code': {'value': invite_code_raw['value'], 'value_type': invite_code_raw['value_type']},
-            'user_identity': {'value': user_identity_raw['value'], 'value_type': user_identity_raw['value_type']},
+            'invite_code': {'value': invite_code_raw['value'], 'value_type': 'string_input'},
+            'user_identity': {'value': user_identity_raw['value'], 'value_type': 'string_input'},
         }
 
         logging.info("Validating and cleansing user inputs...")

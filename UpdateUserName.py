@@ -26,13 +26,13 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
+def rename_user(cursor, user_first_name, user_last_name, user_uuid, org_uuid):
     try:
         get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                           WHERE organisationUUID = %s AND hubUUID = %s;
+                                           SELECT * FROM {database_dict['schema']}.{database_dict['users_table']}
+                                           WHERE userUUID = %s;
                            """
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
+        cursor.execute(get_entry, (user_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -41,14 +41,14 @@ def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
             logging.error("No row found before update for audit logs.")
             raise ValueError("Inital row not found for audit log.")
 
-        logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationUUID = %s AND hubUUID = %s "
+        logging.info("Updating User...")
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['users_table']} SET first_name = %s, last_name = %s WHERE userUUID = %s "
 
-        cursor.execute(sql, (hub_name, org_uuid, hub_uuid))
+        cursor.execute(sql, (user_first_name, user_last_name, user_uuid))
 
-        sql_audit = sql % (hub_name, org_uuid, hub_uuid)
+        sql_audit = sql % (user_first_name, user_last_name, user_uuid)
 
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
+        cursor.execute(get_entry, (user_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -59,11 +59,11 @@ def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 3, hub_uuid, sql_audit,
+            database_dict['users_table'], 3, user_uuid, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
     except Exception as e:
-        logging.error(f"Error updating pool name: {e}")
+        logging.error(f"Error updating user name: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
@@ -80,19 +80,21 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        hub_name_raw = body_json.get('hub_name')
-        hub_uuid_raw = body_json.get('hub_uuid')
+        print(user_email)
+
+        first_name_raw = body_json.get('first_name')
+        last_name_raw = body_json.get('last_name')
 
         variables = {
-            'hub_name': {'value': hub_name_raw['value'], 'value_type': 'string_input'},
-            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
+            'first_name': {'value': first_name_raw['value'], 'value_type': 'name_input'},
+            'last_name': {'value': last_name_raw['value'], 'value_type': 'name_input'},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        hub_name = variables['hub_name']['value']
-        hub_uuid = variables['hub_uuid']['value']
+        first_name = variables['first_name']['value']
+        last_name = variables['last_name']['value']
 
         with conn.cursor() as cursor:
 
@@ -106,15 +108,8 @@ def lambda_handler(event, context):
                                                                                                     'users_organisations_table'],
                                                                                                 user_uuid)
 
-            print(database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
-            # validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
-                                                        database_dict['users_organisations_table'], user_uuid,
-                                                        org_uuid)
-            zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
-                                                            database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid)
+            rename_user(cursor,  first_name, last_name, user_uuid, org_uuid)
             conn.commit()
 
     except Exception as e:
@@ -123,7 +118,7 @@ def lambda_handler(event, context):
         if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
-            body_value = 'Unable to update hub name'
+            body_value = 'Unable to update users name'
         error_response = {
             'statusCode': status_value,
             'body': body_value,
@@ -139,5 +134,5 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'Hub Name Updated Successfully',
+        'body': 'Users Name Updated Successfully',
     }

@@ -39,7 +39,7 @@ def get_organisation_details(cursor, user_uuid):
     try:
         logging.info("Getting organisation details...")
         organisation_details_sql = f"""
-            SELECT DISTINCT a.*, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
+            SELECT DISTINCT a.organisationUUID, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
             JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
             ON a.organisationUUID = b.organisationUUID
             AND b.userUUID = '{user_uuid}'
@@ -52,8 +52,6 @@ def get_organisation_details(cursor, user_uuid):
 
         if organisation_details_result:
             organisation_details_result_list = dict(zip(columns, organisation_details_result[0]))
-            # Convert datetime object to string
-            organisation_details_result_list['updated_at'] = organisation_details_result_list['updated_at'].isoformat()
 
             return organisation_details_result_list
         else:
@@ -130,14 +128,29 @@ def get_organisation_invite_code(cursor, org_uuid, organisation_details):
         traceback.print_exc()
         raise Exception(400, e)
 
+def merge_pools_users_devices(pool_details, pools_devices):
+    try:
+        logging.info("Merging pools, users, and devices...")
+        merged_data = {}
+        for pool_id, details in pool_details.items():
+            pool_uuid = details['Details']['poolUUID']
+            merged_data[pool_id] = details.copy()  # Copy pool details
+            devices = pools_devices.get(pool_uuid, {}).get('Devices', [])  # List of device IDs
+            merged_data[pool_id]['Devices'] = devices
+        return merged_data
+    except Exception as e:
+        logging.error(f"Error merging pools, users, and devices: {e}")
+        traceback.print_exc()
+        raise Exception(400, e)
 
-def get_pool_details(cursor, org_uuid, user_uuid):
+
+def get_pool_details(cursor, org_uuid):
     try:
         logging.info("Getting pool details...")
         pools_sql = f"""
             SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
             FROM {database_dict['schema']}.{database_dict['pools_table']} a 
-            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = '{user_uuid}' and a.organisationUUID = '{org_uuid}'
+            WHERE a.organisationUUID = '{org_uuid}'
         """
         cursor.execute(pools_sql)
         pools_result = cursor.fetchall()
@@ -161,67 +174,9 @@ def get_pool_details(cursor, org_uuid, user_uuid):
         raise Exception(400, e)
 
 
-def get_pool_users(cursor, org_uuid, organisation_details, pools_details, user_uuid_to_id):
-    try:
-        logging.info("Getting pool users...")
-        if organisation_details and (organisation_details['permissionid'] <= 2) and pools_details:
-            pool_uuids = [pool["Details"]["poolUUID"] for pool in pools_details.values()]
-
-            if not pool_uuids:
-                return {}
-
-            placeholders = ",".join(["%s"] * len(pool_uuids))
-            pools_users_sql = f"""
-                SELECT DISTINCT b.poolUUID, a.userUUID
-                FROM {database_dict['schema']}.{database_dict['users_table']} a
-                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b
-                ON a.userUUID = b.userUUID
-                AND b.poolUUID IN ({placeholders})
-                AND a.hub_user = 0
-            """
-            cursor.execute(pools_users_sql, tuple(pool_uuids))
-            pools_users_result = cursor.fetchall()
-
-            if pools_users_result:
-                pools_users = {}
-                for pool_uuid, user_uuid in pools_users_result:
-                    user_id = user_uuid_to_id.get(user_uuid)  # Convert UUID to integer ID
-                    if user_id:
-                        if pool_uuid not in pools_users:
-                            pools_users[pool_uuid] = {'Users': [user_id]}
-                        else:
-                            pools_users[pool_uuid]['Users'].append(user_id)
-                return pools_users
-            else:
-                return {}
-        else:
-            return {}
-    except Exception as e:
-        logging.error(f"Error fetching pool users: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
 
 
-def merge_pools_users_devices(pool_details, pools_users, pools_devices):
-    try:
-        logging.info("Merging pools, users, and devices...")
-        merged_data = {}
-        for pool_id, details in pool_details.items():
-            pool_uuid = details['Details']['poolUUID']
-            merged_data[pool_id] = details.copy()  # Copy pool details
-            users = pools_users.get(pool_uuid, {}).get('Users', [])  # List of user IDs
-            devices = pools_devices.get(pool_uuid, {}).get('Devices', [])  # List of device IDs
-
-            merged_data[pool_id]['Users'] = users
-            merged_data[pool_id]['Devices'] = devices
-        return merged_data
-    except Exception as e:
-        logging.error(f"Error merging pools, users, and devices: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
-
-
-def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
+def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id):
     try:
         logging.info("Getting device details...")
         if organisation_details and (organisation_details['permissionid'] <= 2):
@@ -236,7 +191,6 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             if devices_details_result:
                 # Generate integer-based IDs for devices
                 device_uuid_to_id = {device[0]: idx + 1 for idx, device in enumerate(devices_details_result)}
-
                 devices_dict = {
                     device_uuid_to_id[device[0]]: {
                         "Details": {
@@ -246,40 +200,7 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
                             "device_name": device[3],
                             "registrant": device[4],
                             "device_type_id": device[5],
-                            "associated_hub": device[6]
-                        }
-                    }
-                    for device in devices_details_result
-                }
-                return devices_dict, device_uuid_to_id  # Return dictionary & UUID-to-ID mapping
-            else:
-                return {}, {}
-        else:
-            devices_details_sql = f"""
-               SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
-                FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = '{org_uuid}'
-                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = '{user_uuid}'
-                JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID and d.parentUUID IS NOT NULL
-
-            """
-            cursor.execute(devices_details_sql)
-            devices_details_result = cursor.fetchall()
-
-            if devices_details_result:
-                # Generate integer-based IDs for devices
-                device_uuid_to_id = {device[0]: idx + 1 for idx, device in enumerate(devices_details_result)}
-
-                devices_dict = {
-                    device_uuid_to_id[device[0]]: {
-                        "Details": {
-                            "deviceUUID": device[0],
-                            "long_address": device[1],
-                            "short_address": device[2],
-                            "device_name": device[3],
-                            "registrant": device[4],
-                            "device_type_id": device[5],
-                            "associated_hub": device[6]
+                            "associated_hub": hub_uuid_to_id.get(device[0])  # Convert UUID to integer ID
                         }
                     }
                     for device in devices_details_result
@@ -329,33 +250,56 @@ def get_pools_devices(cursor, device_uuid_to_id):
 def get_hub_details(cursor, org_uuid, organisation_details):
     try:
         logging.info("Getting hub details...")
-        if organisation_details:
-            hub_details_sql = f"""
-                SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id
-                FROM {database_dict['schema']}.{database_dict['hubs_table']} a 
-                WHERE organisationUUID = '{org_uuid}'
-            """
-            cursor.execute(hub_details_sql)
-            hub_details_result = cursor.fetchall()
 
-            if hub_details_result:
-                hub_uuids = {hub[0] for hub in hub_details_result}
+        if not organisation_details:
+            return {}, {}
 
-                # Create a mapping of UUIDs to sequential integers
-                uuid_to_int = {uuid: idx + 1 for idx, uuid in enumerate(hub_uuids)}
+        hub_details_sql = f"""
+            SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id,
+                            b.long_address, b.short_address
+            FROM {database_dict['schema']}.{database_dict['hubs_table']} a
+            LEFT JOIN {database_dict['schema']}.{database_dict['hub_radios_table']} b
+            ON a.hubUUID = b.hubUUID AND a.organisationUUID = %s
+        """
+        cursor.execute(hub_details_sql, (org_uuid,))
+        hub_details_result = cursor.fetchall()
 
-                hub_details = {uuid_to_int[hub[0]]: {
-                    'Details': {'hubUUID': hub[0], 'serial': hub[1], 'hub_name': hub[2], 'registrant': hub[3],
-                                'device_type_id': hub[4]}} for hub in hub_details_result}
-                return hub_details
-            else:
-                return {}
-        else:
-            return {}
+        if not hub_details_result:
+            return {}, {}
+
+        # Group radios by hubUUID
+        hub_map = {}
+        for row in hub_details_result:
+            hub_uuid, serial, hub_name, registrant, device_type_id, long_addr, short_addr = row
+
+            if hub_uuid not in hub_map:
+                hub_map[hub_uuid] = {
+                    'hubUUID': hub_uuid,
+                    'serial': serial,
+                    'hub_name': hub_name,
+                    'registrant': registrant,
+                    'device_type_id': device_type_id,
+                    'radios': []
+                }
+
+            if long_addr and short_addr:
+                hub_map[hub_uuid]['radios'].append({
+                    'long_addr': long_addr,
+                    'short_addr': short_addr
+                })
+        hub_uuid_to_id = {uuid: str(idx + 1) for idx, uuid in enumerate(hub_map.keys())}
+        hub_details = {
+            str(idx + 1): {'Details': data}
+            for idx, (_, data) in enumerate(hub_map.items())
+        }
+
+        return hub_details, hub_uuid_to_id
+
     except Exception as e:
         logging.error(f"Error fetching hub details: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 
 def lambda_handler(event, context):
@@ -375,22 +319,15 @@ def lambda_handler(event, context):
             organisation_details = get_organisation_details(cursor, user_uuid)
             if organisation_details:
                 organisation_uuid = organisation_details['organisationUUID']
-                organisation_users, user_uuid_to_id = get_organisation_users(cursor, organisation_uuid,
-                                                                             organisation_details)
-                organisation_invite_code = get_organisation_invite_code(cursor, organisation_uuid, organisation_details)
+                hub_details, hub_uuid_to_id = get_hub_details(cursor, organisation_uuid, organisation_details)
                 device_details, device_uuid_to_id = get_device_details(cursor, organisation_uuid,
-                                                                       organisation_details, user_uuid)
-                pools_details = get_pool_details(cursor, organisation_uuid, user_uuid)
-                pools_users = get_pool_users(cursor, organisation_uuid, organisation_details, pools_details,
-                                             user_uuid_to_id)
+                                                                       organisation_details, hub_uuid_to_id)
+                pools_details = get_pool_details(cursor, organisation_uuid)
                 pools_devices = get_pools_devices(cursor, device_uuid_to_id)
-                pools_merged = merge_pools_users_devices(pools_details, pools_users, pools_devices)
-                hub_details = get_hub_details(cursor, organisation_uuid, organisation_details)
+                pools_merged = merge_pools_users_devices(pools_details, pools_devices)
 
                 output_dict = {
                     "organisationInfo": organisation_details,
-                    "organisationUsers": organisation_users,
-                    "organisationInviteCode": organisation_invite_code,
                     "Pools": pools_merged,
                     "Devices": device_details,
                     "Hubs": hub_details

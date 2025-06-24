@@ -171,8 +171,8 @@ def lambda_handler(event, context):
         pool_uuid_raw = body_json.get('pool_uuid')
 
         variables = {
-            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': device_uuid_raw['value_type']},
-            'pool_uuid': {'value': pool_uuid_raw['value'], 'value_type': pool_uuid_raw['value_type']}
+            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': 'uuid'},
+            'pool_uuid': {'value': pool_uuid_raw['value'], 'value_type': 'uuid'}
         }
 
         logging.info("Validating and cleansing user inputs...")

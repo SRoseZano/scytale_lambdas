@@ -26,13 +26,13 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
+def rename_organisation_address(cursor, addr_1,addr_2,city,county,postcode, user_uuid, org_uuid):
     try:
         get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                           WHERE organisationUUID = %s AND hubUUID = %s;
+                                           SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']}
+                                           WHERE organisationUUID = %s;
                            """
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
+        cursor.execute(get_entry, (org_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -41,14 +41,14 @@ def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
             logging.error("No row found before update for audit logs.")
             raise ValueError("Inital row not found for audit log.")
 
-        logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationUUID = %s AND hubUUID = %s "
+        logging.info("Updating Org Address...")
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['organisations_table']} SET address_line_1 = %s, address_line_2 = %s, city = %s, county = %s, postcode = %s WHERE organisationUUID = %s "
 
-        cursor.execute(sql, (hub_name, org_uuid, hub_uuid))
+        cursor.execute(sql, (addr_1,addr_2,city,county,postcode, org_uuid))
 
-        sql_audit = sql % (hub_name, org_uuid, hub_uuid)
+        sql_audit = sql % (addr_1,addr_2,city,county,postcode, org_uuid)
 
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
+        cursor.execute(get_entry, (org_uuid,))
         last_inserted_row = cursor.fetchone()
         if last_inserted_row:
             colnames = [desc[0] for desc in cursor.description]
@@ -59,11 +59,11 @@ def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
 
         zanolambdashelper.helpers.submit_to_audit_log(
             cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 3, hub_uuid, sql_audit,
+            database_dict['organisations_table'], 3, postcode, sql_audit,
             historic_row_json, current_row_json, org_uuid, user_uuid)
 
     except Exception as e:
-        logging.error(f"Error updating pool name: {e}")
+        logging.error(f"Error updating org address: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
@@ -80,19 +80,28 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        hub_name_raw = body_json.get('hub_name')
-        hub_uuid_raw = body_json.get('hub_uuid')
+        org_addr1_raw = body_json.get('addr1')
+        org_addr2_raw = body_json.get('addr2')
+        org_city_raw = body_json.get('city')
+        org_county_raw = body_json.get('county')
+        org_postcode_raw = body_json.get('postcode')
 
         variables = {
-            'hub_name': {'value': hub_name_raw['value'], 'value_type': 'string_input'},
-            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
+            'addr1': {'value': org_addr1_raw['value'], 'value_type': 'string_input'},
+            'addr2': {'value': org_addr2_raw['value'], 'value_type': 'string_input'},
+            'city': {'value': org_city_raw['value'], 'value_type': 'string_input'},
+            'county': {'value': org_county_raw['value'], 'value_type': 'string_input'},
+            'postcode': {'value': org_postcode_raw['value'], 'value_type': 'postcode_input'},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        hub_name = variables['hub_name']['value']
-        hub_uuid = variables['hub_uuid']['value']
+        org_addr1 = variables['addr1']['value']
+        org_addr2 = variables['addr2']['value']
+        org_city = variables['city']['value']
+        org_county = variables['county']['value']
+        org_postcode = variables['postcode']['value']
 
         with conn.cursor() as cursor:
 
@@ -106,15 +115,11 @@ def lambda_handler(event, context):
                                                                                                     'users_organisations_table'],
                                                                                                 user_uuid)
 
-            print(database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
-            # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
                                                         org_uuid)
-            zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
-                                                            database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid)
+            rename_organisation_address(cursor,  org_addr1, org_addr2, org_city, org_county, org_postcode, user_uuid, org_uuid)
             conn.commit()
 
     except Exception as e:
@@ -123,7 +128,7 @@ def lambda_handler(event, context):
         if status_value == 422:  # if 422 then validation
             body_value = e.args[1]
         else:
-            body_value = 'Unable to update hub name'
+            body_value = 'Unable to update organisations address'
         error_response = {
             'statusCode': status_value,
             'body': body_value,
@@ -139,5 +144,5 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'Hub Name Updated Successfully',
+        'body': 'Organisations Address Updated Successfully',
     }

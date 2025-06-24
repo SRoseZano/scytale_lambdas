@@ -150,11 +150,11 @@ def lambda_handler(event, context):
         associated_hub_raw = body_json.get('associated_hub')
 
         variables = {
-            'device_name': {'value': device_name_raw['value'], 'value_type': device_name_raw['value_type']},
-            'long_address': {'value': long_address_raw['value'], 'value_type': long_address_raw['value_type']},
-            'short_address': {'value': short_address_raw['value'], 'value_type': short_address_raw['value_type']},
-            'device_type_id': {'value': device_type_id_raw['value'], 'value_type': device_type_id_raw['value_type']},
-            'associated_hub': {'value': associated_hub_raw['value'], 'value_type': associated_hub_raw['value_type']},
+            'device_name': {'value': device_name_raw['value'], 'value_type': 'string_input'},
+            'long_address': {'value': long_address_raw['value'], 'value_type': 'long_address'},
+            'short_address': {'value': short_address_raw['value'], 'value_type': 'short_address'},
+            'device_type_id': {'value': device_type_id_raw['value'], 'value_type': 'id'},
+            'associated_hub': {'value': associated_hub_raw['value'], 'value_type': 'mac_address'},
         }
 
         logging.info("Validating and cleansing user inputs...")

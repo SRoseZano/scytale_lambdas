@@ -77,7 +77,7 @@ def lambda_handler(event, context):
         device_uuid_raw = body_json.get('device_uuid')
 
         variables = {
-            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': device_uuid_raw['value_type']},
+            'device_uuid': {'value': device_uuid_raw['value'], 'value_type': 'uuid'},
         }
 
         device_uuid = variables['device_uuid']['value']
