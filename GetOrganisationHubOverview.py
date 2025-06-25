@@ -200,7 +200,7 @@ def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id):
                             "device_name": device[3],
                             "registrant": device[4],
                             "device_type_id": device[5],
-                            "associated_hub": hub_uuid_to_id.get(device[0])  # Convert UUID to integer ID
+                            "associated_hub": hub_uuid_to_id.get(device[6])  # Convert UUID to integer ID
                         }
                     }
                     for device in devices_details_result
@@ -287,7 +287,7 @@ def get_hub_details(cursor, org_uuid, organisation_details):
                     'long_addr': long_addr,
                     'short_addr': short_addr
                 })
-        hub_uuid_to_id = {uuid: str(idx + 1) for idx, uuid in enumerate(hub_map.keys())}
+        hub_uuid_to_id = {uuid: idx + 1 for idx, uuid in enumerate(hub_map.keys())}
         hub_details = {
             str(idx + 1): {'Details': data}
             for idx, (_, data) in enumerate(hub_map.items())
@@ -341,7 +341,7 @@ def lambda_handler(event, context):
         if status_value == 422:  # if 422 then validation error
             body_value = e.args[1]
         else:
-            body_value = 'Unable to retrive organisation details'
+            body_value = 'Unable to retrieve organisation details'
         error_response = {
             'statusCode': status_value,
             'body': body_value,

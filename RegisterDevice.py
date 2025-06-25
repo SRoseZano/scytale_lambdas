@@ -174,7 +174,7 @@ def lambda_handler(event, context):
             'device_name': {'value': device_name_raw['value'], 'value_type': 'string_input'},
             'long_address': {'value': long_address_raw['value'], 'value_type': 'long_address'},
             'device_type_id': {'value': device_type_id_raw['value'], 'value_type': 'id'},
-            'associated_hub': {'value': associated_hub_raw['value'], 'value_type': 'mac_address'},
+            'associated_hub': {'value': associated_hub_raw['value'], 'value_type': 'uuid'},
         }
 
         logging.info("Validating and cleansing user inputs...")
