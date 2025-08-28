@@ -27,17 +27,17 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 # Sample dictionary with values
 status_lookup_data = [{
-    "status_code": 200,
+    "status_code": 2000,
     "status_message": "OK",
     "status_type_id": 1
 },
     {
-        "status_code": 201,
+        "status_code": 3000,
         "status_message": "WARNING",
         "status_type_id": 2
     },
     {
-        "status_code": 400,
+        "status_code": 4000,
         "status_message": "ERROR",
         "status_type_id": 3
     }
@@ -140,6 +140,7 @@ def lambda_handler(event, context):
                 postcode VARCHAR(20) NOT NULL,
                 phone_no VARCHAR(15) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                stripe_sub_id VARCHAR(50),
                 PRIMARY KEY (organisationUUID)
             );
             """
@@ -350,7 +351,8 @@ def lambda_handler(event, context):
                     (1, 'HUB'),
                     (2, 'DIMMABLE_LIGHT_ENDPOINT'),
                     (3, 'ENCODER_CONTROLLER'),
-                    (4, 'PIR_CONTROLLER');
+                    (4, 'PIR_CONTROLLER'),
+                    (5, 'EMERGENCY_LIGHT_ENDPOINT');
             """
             cursor.execute(insert_device_types)
 
