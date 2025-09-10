@@ -64,6 +64,7 @@ def get_hub_accounts(cursor):
             WHERE a.first_name = 'John' 
             AND a.last_name = 'Doe' 
             AND a.email LIKE '%@zanocontrols.co.uk'
+            AND b.hubUUID IS NULL
         """
 
         cursor.execute(sql)
