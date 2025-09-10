@@ -207,8 +207,7 @@ def lambda_handler(event, context):
             # Filter to get only the identity pairs for deleted emails
             policy_identity_pairs_to_delete = [
                 (identity_pool_id, associated_policy)
-                for email, identity_pool_id, associated_policy in hub_email_policy_identity_pairs
-                if email in hub_emails
+                for _, identity_pool_id, associated_policy in hub_email_policy_identity_pairs
             ]
 
             detach_users_from_policy(lambda_client, policy_identity_pairs_to_delete)
