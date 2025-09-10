@@ -200,6 +200,12 @@ def lambda_handler(event, context):
 
             hub_uuids = get_hub_uuids(cursor)
             hub_emails, hub_email_policy_identity_pairs = get_hub_accounts(cursor)
+            if not hub_emails:
+                logging.info("No hub accounts found. Exiting script.")
+                return {
+                    'statusCode': 200,
+                    'body': 'No hub accounts to delete.'
+                }
             delete_hub_entries_from_db(cursor, hub_emails)
             delete_users_from_cognito(lambda_client, hub_emails)
             delete_users_from_iotcore(lambda_client, hub_uuids)
