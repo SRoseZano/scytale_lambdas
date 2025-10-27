@@ -105,7 +105,9 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             org_subs = get_valid_org_subs(cursor)
-            update_stripe_sub(org_subs)
+            print(org_subs)
+            if org_subs:
+                update_stripe_sub(org_subs)
             conn.commit()
 
     except Exception as e:

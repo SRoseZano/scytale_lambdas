@@ -43,6 +43,59 @@ status_lookup_data = [{
     }
 ]
 
+# Device type events and actions data
+device_type_data = {
+    3: {  # Device type
+        "events": [
+            {"event_number": 1, "event_name": "Press"},
+            {"event_number": 2, "event_name": "Turn Up"},
+            {"event_number": 3, "event_name": "Turn Down"},
+            {"event_number": 4, "event_name": "Hold"},
+            {"event_number": 5, "event_name": "Hold Turn Up"},
+            {"event_number": 6, "event_name": "Hold Turn Down"}
+        ],
+        "actions": []
+    },
+    4: {  # Device type
+        "events": [
+            {"event_number": 1, "event_name": "Presence Detected"},
+            {"event_number": 2, "event_name": "Presence Gone"}
+        ],
+        "actions": []
+    },
+    2: {  # Device type
+        "events": [],
+        "actions": [
+            {"action_number": 100, "action_name": "Light On"},
+            {"action_number": 101, "action_name": "Light On For"},
+            {"action_number": 102, "action_name": "Light Off"},
+            {"action_number": 103, "action_name": "Light Off For"},
+            {"action_number": 104, "action_name": "Light Set"},
+            {"action_number": 105, "action_name": "Light Toggle"},
+            {"action_number": 106, "action_name": "Brightness Set"}
+        ]
+    },
+    5: {  # Device type
+        "events": [],
+        "actions": [
+            {"action_number": 100, "action_name": "Light On"},
+            {"action_number": 101, "action_name": "Light On For"},
+            {"action_number": 102, "action_name": "Light Off"},
+            {"action_number": 103, "action_name": "Light Off For"},
+            {"action_number": 104, "action_name": "Light Set"},
+            {"action_number": 105, "action_name": "Light Toggle"},
+            {"action_number": 106, "action_name": "Brightness Set"},
+            {"action_number": 107, "action_name": "Brightness Up"},
+            {"action_number": 108, "action_name": "Brightness Down"},
+            {"action_number": 109, "action_name": "Battery Charging On"},
+            {"action_number": 110, "action_name": "Battery Charging Off"},
+            {"action_number": 111, "action_name": "Battery Charging Set"},
+            {"action_number": 112, "action_name": "Battery Brightness Set"}
+        ]
+    }
+}
+
+
 
 def lambda_handler(event, context):
     try:
@@ -73,8 +126,10 @@ def lambda_handler(event, context):
                 warning_lookup,
                 status_type_lookup,
                 status_lookup,
-                hub_radios
-
+                hub_radios,
+                device_type_default_mappings,
+                device_type_actions,
+                device_type_events
             """
             cursor.execute(drop_tables)
 
@@ -320,6 +375,63 @@ def lambda_handler(event, context):
 
             cursor.execute(create_hub_radios_table)
 
+            # Create device type events table
+            create_device_type_events_table = """
+                                       CREATE TABLE device_type_events (
+                                          event_ID INT AUTO_INCREMENT PRIMARY KEY,
+                                          device_type_ID INT NOT NULL,
+                                          event_number INT NOT NULL,
+                                          event_name VARCHAR(255) NOT NULL,
+                                          UNIQUE (device_type_ID, event_number),
+                                          FOREIGN KEY (device_type_ID)
+                                            REFERENCES device_lookup(device_type_ID)
+                                            ON DELETE CASCADE
+                                        );
+
+                                   """
+
+            cursor.execute(create_device_type_events_table)
+
+            # Create device type actions table
+            create_device_type_actions_table = """
+                                       CREATE TABLE device_type_actions (
+                                          action_ID INT AUTO_INCREMENT PRIMARY KEY,
+                                          device_type_ID INT NOT NULL,
+                                          action_number INT NOT NULL,
+                                          action_name VARCHAR(255) NOT NULL,
+                                          UNIQUE (device_type_ID, action_number),
+                                          FOREIGN KEY (device_type_ID)
+                                            REFERENCES device_lookup(device_type_ID)
+                                            ON DELETE CASCADE
+                                        );
+
+                                   """
+
+            cursor.execute(create_device_type_actions_table)
+
+            # Create device type default mappings table
+            create_device_type_default_mappings_table = """
+                                       CREATE TABLE device_type_default_mappings (
+                                          mapping_ID INT AUTO_INCREMENT PRIMARY KEY,
+                                          event_ID INT NOT NULL,
+                                          action_ID INT NOT NULL,
+                                          event_data INT,
+                                          priority INT NOT NULL,
+                                          sequence INT NOT NULL,
+                                          time_days TINYINT UNSIGNED NOT NULL,
+                                          time_start SMALLINT UNSIGNED NOT NULL,
+                                          time_stop SMALLINT UNSIGNED NOT NULL,
+                                          FOREIGN KEY (event_ID)
+                                            REFERENCES device_type_events(event_ID)
+                                            ON DELETE CASCADE,
+                                          FOREIGN KEY (action_ID)
+                                            REFERENCES device_type_actions(action_ID)
+                                            ON DELETE CASCADE
+                                        );
+                                   """
+
+            cursor.execute(create_device_type_default_mappings_table)
+
 
 
             cursor.execute("SHOW TABLES;")
@@ -386,6 +498,21 @@ def lambda_handler(event, context):
                       for entry in status_lookup_data]
 
             cursor.executemany(insert_status_lookup, values)
+
+            # insert device type related actions and events ENTER DEFAULT MAPPINGS MANUALLY
+            for device_type_id, data in device_type_data.items():
+                # Insert events
+                for event in data["events"]:
+                    cursor.execute(
+                        "INSERT INTO device_type_events (device_type_ID, event_number, event_name) VALUES (%s, %s, %s)",
+                        (device_type_id, event["event_number"], event["event_name"])
+                    )
+                # Insert actions
+                for action in data["actions"]:
+                    cursor.execute(
+                        "INSERT INTO device_type_actions (device_type_ID, action_number, action_name) VALUES (%s, %s, %s)",
+                        (device_type_id, action["action_number"], action["action_name"])
+                    )
 
             # Commit the changes and close the connection
             conn.commit()
