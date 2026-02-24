@@ -45,9 +45,7 @@ def generate_unique_short_address(cursor, org_uuid):
             return short_address
         attempt += 1
         if attempt > 10000:
-            raise Exception("Unable to generate a unique short address after many attempts.")
-
-
+            raise Exception("Unable to generate a unique short address after 10000 attempts.")
 
 
 def add_radio_entry(cursor, user_uuid, org_uuid, hub_uuid, long_address):
@@ -108,6 +106,9 @@ def lambda_handler(event, context):
         hub_uuid_raw = body_json.get('hub_UUID', '')
         long_address_raw = body_json.get('long_addr', '')
 
+        print(hub_uuid_raw)
+        print(long_address_raw)
+
         variables = {
             'hub_UUID': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
             'long_address': {'value': long_address_raw['value'], 'value_type': 'long_address'},
@@ -121,27 +122,32 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
-                                                                       database_dict['users_table'], user_email)
+                                                                            database_dict['users_table'], user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],
-                                                                       database_dict['users_organisations_table'],
-                                                                       user_uuid)
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid, org_uuid)
 
-            add_radio_entry(cursor,user_uuid, org_uuid, hub_uuid, long_address)
+            add_radio_entry(cursor, user_uuid, org_uuid, hub_uuid, long_address)
             conn.commit()
 
+
     except Exception as e:
+
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to add radio addresses to hub'
+        status_value = 500
+        body_value = 'Unable to add radio addresses to hub'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,
         }
+
         return error_response
 
     finally:

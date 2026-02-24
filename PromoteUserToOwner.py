@@ -26,7 +26,7 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def append_user_to_all_pools(cursor,org_uuid, user_uuid):
+def append_user_to_all_pools(cursor, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append user to all org pools...")
         # SQL query to find top level pool and assign to everyone under it
@@ -57,7 +57,7 @@ def append_user_to_all_pools(cursor,org_uuid, user_uuid):
 
         cursor.execute(sql, (org_uuid, user_uuid, user_uuid))
 
-        sql_audit = sql % (org_uuid, user_uuid, user_uuid )
+        sql_audit = sql % (org_uuid, user_uuid, user_uuid)
 
         get_current_entry = f"""
                                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
@@ -136,7 +136,7 @@ def promote_user_to_owner(cursor, org_uuid, user_uuid):
         raise Exception(400, e)
 
 
-def demote_user_to_admin(cursor,user_uuid, org_uuid):
+def demote_user_to_admin(cursor, user_uuid, org_uuid):
     try:
 
         get_entry = f"""
@@ -213,14 +213,14 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_owner(cursor, database_dict['schema'],
@@ -237,11 +237,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to promote user'
+
+        status_value = 500
+        body_value = 'Unable to promote user'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

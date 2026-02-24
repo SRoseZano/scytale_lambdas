@@ -112,11 +112,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to log org subscription useage'
+
+        status_value = 500
+        body_value = 'Unable to log org subscription useage'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

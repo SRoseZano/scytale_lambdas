@@ -4,7 +4,7 @@ import traceback
 import random
 import string
 
-cognitoPoolId = 'eu-west-2_S9timSWu1'
+cognitoPoolId = 'eu-west-2_TUhwdis6d'
 client = boto3.client('cognito-idp')
 
 
@@ -102,13 +102,17 @@ def lambda_handler(event, context):
                 'password': password
             }
         }
+
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        error_status_code = e.args[1] if len(e.args) > 1 else 500
-        error_body = e.args[0] if len(e.args) > 0 else f"Unspecified error: {e}"
+
+        status_value = 500
+        body_value = 'Unable to create hub cognito account'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
         error_response = {
-            'statusCode': error_status_code,
-            'body': {'message': error_body}
+            'statusCode': status_value,
+            'body': body_value,
         }
         return error_response
 

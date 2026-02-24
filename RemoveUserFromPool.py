@@ -71,6 +71,7 @@ def has_permissions_to_remove_target(cursor, user_uuid, target_user_uuid, org_uu
     if target_user_permissions[0] < 3 or login_user_permissions[0] > 2:
         raise Exception(402, "Insufficient permissions to remove user from group")
 
+
 def remove_user_from_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
     try:
 
@@ -150,14 +151,14 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
@@ -175,11 +176,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422 or status_value == 402:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to remove user from pool'
+
+        status_value = 500
+        body_value = 'Unable to remove user from pool'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422 or status_value == 402:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

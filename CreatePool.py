@@ -45,8 +45,8 @@ def create_pool(cursor, pool_name, parent_uuid, org_uuid, user_uuid):
         logging.info("Creating pool...")
         pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, pool_name)
         sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (poolUUID,organisationUUID, pool_name, parentUUID) VALUES (%s, %s, %s, %s)"
-        cursor.execute(sql, (pool_uuid,org_uuid, pool_name, parent_uuid))
-        sql_audit = sql % (pool_uuid,org_uuid, pool_name, parent_uuid)
+        cursor.execute(sql, (pool_uuid, org_uuid, pool_name, parent_uuid))
+        sql_audit = sql % (pool_uuid, org_uuid, pool_name, parent_uuid)
 
         # Step 2: Create audit log
         try:
@@ -88,14 +88,16 @@ def inherit_parent_users_into_pool(cursor, pool_uuid, parent_uuid, org_uuid, use
         SELECT %s, a.userUUID
         FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
         JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b
-        ON a.userUUID = b.userUUID AND b.permissionid <= 2 AND a.poolUUID = %s
+        ON a.userUUID = b.userUUID 
+        WHERE b.permissionid <= 2 AND a.poolUUID = %s
 
         UNION
 
         SELECT %s, a.userUUID
         FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
         JOIN {database_dict['schema']}.{database_dict['pools_table']} b
-        ON a.poolUUID = b.poolUUID AND b.parentUUID IS NOT NULL AND a.poolUUID = %s
+        ON a.poolUUID = b.poolUUID 
+        WHERE b.parentUUID IS NOT NULL AND a.poolUUID = %s
 
         """
         cursor.execute(sql, (pool_uuid, parent_uuid, pool_uuid, parent_uuid))
@@ -164,14 +166,14 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
@@ -191,11 +193,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422 or status_value == 403:  # if 422 then validation
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to create pool'
+
+        status_value = 500
+        body_value = 'Unable to create pool'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422 or status_value == 403:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

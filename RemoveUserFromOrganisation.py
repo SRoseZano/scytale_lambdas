@@ -120,7 +120,8 @@ def remove_user_from_organisation(cursor, org_uuid, user_uuid):
 
         get_entry = f"""
                               SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID AND p.userUUID = %s AND a.organisationUUID = %s
+                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+                              WHERE p.userUUID = %s AND a.organisationUUID = %s
               """
         cursor.execute(get_entry, (user_uuid, org_uuid,))
         last_inserted_row = cursor.fetchall()
@@ -135,7 +136,8 @@ def remove_user_from_organisation(cursor, org_uuid, user_uuid):
         sql = f"""
             DELETE p
             FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID AND p.userUUID = %s AND a.organisationUUID = %s
+            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+            WHERE p.userUUID = %s AND a.organisationUUID = %s
             """
         cursor.execute(sql, (user_uuid, org_uuid))
 
@@ -242,14 +244,14 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
                                                         org_uuid)
@@ -273,11 +275,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422 or status_value == 403 or status_value == 402:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to remove user from organisation'
+
+        status_value = 500
+        body_value = 'Unable to remove user from organisation'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422 or status_value == 403 or status_value == 402:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

@@ -42,7 +42,7 @@ def get_organisation_details(cursor, user_uuid):
             SELECT DISTINCT a.*, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
             JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
             ON a.organisationUUID = b.organisationUUID
-            AND b.userUUID = '{user_uuid}'
+            WHERE b.userUUID = '{user_uuid}'
             LIMIT 1
         """
 
@@ -75,7 +75,7 @@ def get_organisation_users(cursor, organisation_uuid, organisation_details):
                 FROM {database_dict['schema']}.{database_dict['users_table']} a
                 JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
                 ON a.userUUID = b.userUUID
-                AND a.hub_user = 0
+                WHERE a.hub_user = 0
                 AND b.organisationUUID = '{organisation_uuid}'
             """
             cursor.execute(organisation_users_sql)
@@ -125,7 +125,8 @@ def get_pool_details(cursor, organisation_uuid, user_uuid):
         pools_sql = f"""
             SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
             FROM {database_dict['schema']}.{database_dict['pools_table']} a 
-            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID AND b.userUUID = '{user_uuid}' and a.organisationUUID = '{organisation_uuid}'
+            JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID
+            WHERE b.userUUID = '{user_uuid}' AND a.organisationUUID = '{organisation_uuid}'
         """
         cursor.execute(pools_sql)
         pools_result = cursor.fetchall()
@@ -154,7 +155,7 @@ def get_pool_users(cursor, organisation_details, pools_details):
                 FROM {database_dict['schema']}.{database_dict['users_table']} a
                 JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b
                 ON a.userUUID = b.userUUID
-                AND poolUUID IN ({','.join(repr(k) for k in pools_details.keys())})
+                WHERE b.poolUUID IN ({','.join(repr(k) for k in pools_details.keys())})
                 AND a.hub_user = 0
             """
             cursor.execute(pools_users_sql)
@@ -226,9 +227,10 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             devices_details_sql = f"""
                SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
                 FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID AND a.organisationUUID = '{org_uuid}'
-                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID and c.userUUID = '{user_uuid}'
-                JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID and d.parentUUID IS NOT NULL
+                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID 
+                JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID
+                JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID
+                WHERE a.organisationUUID = '{org_uuid}' AND c.userUUID = '{user_uuid}' AND d.parentUUID IS NOT NULL
 
             """
             cursor.execute(devices_details_sql)
@@ -363,11 +365,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to retrive organisation details'
+
+        status_value = 500
+        body_value = 'Unable to retrieve organisation details'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

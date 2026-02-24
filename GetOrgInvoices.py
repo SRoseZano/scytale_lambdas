@@ -22,48 +22,55 @@ rds_region = database_details['rds_region']
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
 rds_client = zanolambdashelper.helpers.create_client('rds')
+lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
+stripe_org_invoices_lambda = "GetStripeOrgInvoices"
 
-def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
+
+def get_stripe_org_invoices(stripe_sub_id):
     try:
-        get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                           WHERE organisationUUID = %s AND hubUUID = %s;
-                           """
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+        logging.info("Creating stripe org invoices...")
 
-        logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationUUID = %s AND hubUUID = %s "
+        # Run policy creation lambda
+        response = lambda_client.invoke(
+            FunctionName=stripe_org_invoices_lambda,
+            InvocationType='RequestResponse',
+            LogType='Tail',
+            Payload=json.dumps({'stripe_sub_id': stripe_sub_id})
+        )
 
-        cursor.execute(sql, (hub_name, org_uuid, hub_uuid))
+        response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+        logging.info(response_payload)
 
-        sql_audit = sql % (hub_name, org_uuid, hub_uuid)
+        if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
+            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+            traceback.print_exc()
+            raise Exception(400, response_payload)
 
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 3, hub_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid)
+        return response_payload['invoices']
 
     except Exception as e:
-        logging.error(f"Error updating pool name: {e}")
+        logging.error(f"Error getting subscription invoices: {e}")
+        traceback.print_exc()
+        raise Exception(400, e)
+
+
+def get_org_stripe_sub_id(cursor, org_uuid):
+    try:
+        logging.info("Getting stripe sub id...")
+        sql = f"SELECT stripe_sub_id FROM {database_dict['schema']}.{database_dict['organisations_table']} WHERE organisationUUID = %s"
+
+        cursor.execute(sql, (org_uuid,))
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+        else:
+            raise ValueError("Stripe subscription id doesn't exist for provided organisation id")
+
+    except Exception as e:
+        logging.error(f"Error fetching stripe sub id by orgUUID: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
@@ -80,22 +87,7 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        hub_name_raw = body_json.get('hub_name')
-        hub_uuid_raw = body_json.get('hub_uuid')
-
-        variables = {
-            'hub_name': {'value': hub_name_raw['value'], 'value_type': 'string_input'},
-            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
-        }
-
-        logging.info("Validating and cleansing user inputs...")
-        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
-
-        hub_name = variables['hub_name']['value']
-        hub_uuid = variables['hub_uuid']['value']
-
         with conn.cursor() as cursor:
-
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
                                                                             database_dict['schema'],
                                                                             database_dict['users_table'],
@@ -106,22 +98,20 @@ def lambda_handler(event, context):
                                                                                    'users_organisations_table'],
                                                                                user_uuid)
 
-            print(database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
                                                         org_uuid)
-            zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
-                                                           database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid)
-            conn.commit()
+            stripe_sub_id = get_org_stripe_sub_id(cursor, org_uuid)
+            if stripe_sub_id:
+                invoices = get_stripe_org_invoices(stripe_sub_id)
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
 
         status_value = 500
-        body_value = 'Unable to update hub name'
+        body_value = 'Unable to get org invoices'
         if len(e.args) >= 2 and isinstance(e.args[0], int):
             status_value = e.args[0]
             if status_value == 422:  # if 422 then validation error
@@ -132,7 +122,6 @@ def lambda_handler(event, context):
         }
         return error_response
 
-
     finally:
         try:
             cursor.close()
@@ -142,5 +131,6 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'Hub Name Updated Successfully',
+        'body': 'Org Invoices Returned Successfully',
+        'invoices': invoices,
     }

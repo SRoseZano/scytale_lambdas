@@ -21,14 +21,13 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
-lambda_client = zanolambdashelper.helpers.create_client('lambda') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
+lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
 policy_deletion_lambda = "DeletePolicy"
 policy_detatch_lambda = "DetachPolicy"
-
 
 
 def get_user_identities(cursor, organisation_uuid):
@@ -38,7 +37,7 @@ def get_user_identities(cursor, organisation_uuid):
             SELECT DISTINCT a.identity_pool_id 
             FROM {database_dict['schema']}.{database_dict['users_table']} a
             INNER JOIN {database_dict['users_organisations_table']} b ON a.userUUID = b.userUUID 
-            AND organisationUUID = %s
+            WHERE b.organisationUUID = %s
         """
         cursor.execute(sql, (organisation_uuid,))
         user_identities = cursor.fetchall()
@@ -48,6 +47,7 @@ def get_user_identities(cursor, organisation_uuid):
         logging.error(f"Error fetching user identities: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def get_associated_policy(cursor, organisation_uuid):
     try:
@@ -61,8 +61,8 @@ def get_associated_policy(cursor, organisation_uuid):
         traceback.print_exc()
         raise Exception(400, e)
 
-def delete_organisation(cursor, org_uuid, user_uuid):
 
+def delete_organisation(cursor, org_uuid, user_uuid):
     try:
         get_historic_entry = f"""
                                       SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']} 
@@ -90,11 +90,12 @@ def delete_organisation(cursor, org_uuid, user_uuid):
         )
         logging.info("Audit log submitted successfully.")
         logging.info("Organisation deleted successfully.")
-    
+
     except Exception as e:
         logging.error(f"Error deleting organisation: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, user_identities):
     try:
@@ -113,12 +114,13 @@ def detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, 
             if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
                 logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
                 traceback.print_exc()
-                raise Exception(400,f"Lambda invocation failed, ResponsePayload: {response_payload}")
-                
+                raise Exception(400, f"Lambda invocation failed, ResponsePayload: {response_payload}")
+
     except Exception as e:
         logging.error(f"Error detaching users from policy: {e}")
         traceback.print_exc()
         raise Exception(400, e)
+
 
 def delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name):
     try:
@@ -141,12 +143,12 @@ def delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name)
         raise Exception(400, e)
 
 
-
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
@@ -154,35 +156,41 @@ def lambda_handler(event, context):
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
         with conn.cursor() as cursor:
-            
-            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
-            
-            #validate precursors to running this command
-            zanolambdashelper.helpers.is_user_org_owner(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
 
-            user_identities = get_user_identities(cursor,  org_uuid)
-            policy_name = get_associated_policy(cursor,org_uuid)
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
+                                                                            database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor, database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
+
+            # validate precursors to running this command
+            zanolambdashelper.helpers.is_user_org_owner(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], user_uuid, org_uuid)
+
+            user_identities = get_user_identities(cursor, org_uuid)
+            policy_name = get_associated_policy(cursor, org_uuid)
             delete_organisation(cursor, org_uuid, user_uuid)
             detach_users_from_policy(lambda_client, policy_detatch_lambda, policy_name, user_identities)
             delete_associated_policy(lambda_client, policy_deletion_lambda, policy_name)
 
             conn.commit()
 
-            
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422: # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to delete organisation'
+
+        status_value = 500
+        body_value = 'Unable to delete organisation'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,
         }
         return error_response
-       
+
     finally:
         try:
             cursor.close()

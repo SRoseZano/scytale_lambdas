@@ -121,14 +121,15 @@ def lambda_handler(event, context):
             delete_device_from_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
             conn.commit()
 
-
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to remove device from pool'
+
+        status_value = 500
+        body_value = 'Unable to remove device from pool'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

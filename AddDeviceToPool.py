@@ -25,6 +25,34 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
+input_device_types = [3, 4]
+
+
+def is_input_device(cursor, device_uuid):
+    try:
+        logging.info("Executing SQL query to check for input device...")
+        sql = f"""
+            SELECT d.device_type_id
+            FROM {database_dict['schema']}.{database_dict['devices_table']} d
+            WHERE deviceUUID = %s
+            LIMIT 1
+        """
+        cursor.execute(sql, (device_uuid,))
+        result = cursor.fetchone()
+
+        if result is None:
+            logging.warning(f"No device found for UUID: {device_uuid}")
+            return False
+
+        device_type_id = result[0]
+        is_input_device = device_type_id in input_device_types
+
+        return is_input_device
+
+    except Exception as e:
+        logging.error(f"Error checking device type: {e}")
+        return False
+
 
 def get_current_device_pools(cursor, device_uuid):
     try:
@@ -33,6 +61,33 @@ def get_current_device_pools(cursor, device_uuid):
             SELECT distinct p.poolUUID
             FROM pools_devices p
             WHERE deviceUUID = %s
+            """
+        cursor.execute(sql, (device_uuid,))
+        sql_result = cursor.fetchall()
+        # If the result is empty, return an empty list
+        if sql_result:
+            device_pools = [t[0] for t in sql_result]
+        else:
+            device_pools = []  # No pools found
+
+        return device_pools;
+    except Exception as e:
+        logging.error(f"Error obtaining current device pools: {e}")
+        traceback.print_exc()
+        raise Exception(400, e)
+
+
+def get_current_input_device_pools(cursor, device_uuid):
+    try:
+        logging.info("Executing SQL query to get all pools currently belonging to device...")
+        sql = f"""
+            SELECT DISTINCT pd.poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_devices_table']} AS pd
+            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} AS p
+                ON pd.poolUUID = p.poolUUID
+            WHERE pd.deviceUUID = %s
+            AND p.parentUUID IS NOT NULL;
+
             """
         cursor.execute(sql, (device_uuid,))
         sql_result = cursor.fetchall()
@@ -84,7 +139,58 @@ def get_potential_device_pools(cursor, pool_uuid, device_uuid):
         raise Exception(400, e)
 
 
-def append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid ):
+def append_input_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
+    try:
+        logging.info("Executing SQL query to append device to pool non recursively...")
+        # SQL query to add device to pool
+        sql = f"""
+            INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID) VALUES (%s, %s)
+
+        """
+        cursor.execute(sql, (device_uuid, pool_uuid))
+
+        sql_audit = sql % (device_uuid, pool_uuid,)
+
+        logging.info("SQL query executed successfully.")
+
+        # Fetch and log the inserted row
+        try:
+            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']} 
+                                       WHERE deviceUUID = %s """
+            cursor.execute(get_inserted_row_sql, (device_uuid,))
+            last_inserted_row = cursor.fetchall()
+
+            if last_inserted_row:
+                colnames = [desc[0] for desc in cursor.description]
+                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+                # Attempt to write to the audit log
+                try:
+                    zanolambdashelper.helpers.submit_to_audit_log(
+                        cursor, database_dict['schema'], database_dict['audit_log_table'],
+                        database_dict['pools_devices_table'], 3, device_uuid, sql_audit,
+                        '{}', inserted_row_json, org_uuid, user_uuid
+                    )
+                    logging.info("Audit log submitted successfully.")
+                except Exception as e:
+                    logging.error(f"Error producing audit log: {e}")
+                    traceback.print_exc()
+                    raise  # Re-raise to let the outer block handle it
+            else:
+                logging.error("No row found after insertion for audit logs.")
+                raise ValueError("Inserted row not found.")
+        except Exception as e:
+            logging.error(f"Error gathering inserted rows for audit logs: {e}")
+            traceback.print_exc()
+            raise  # Re-raise to let the outer block handle it
+
+    except Exception as e:
+        # Outermost block to capture and handle all exceptions
+        logging.error(f"Unexpected error in append_device_to_pool: {e}")
+        traceback.print_exc()
+        raise Exception(400, e)
+
+
+def append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
     try:
         logging.info("Executing SQL query to append device to pool...")
         # SQL query to add device to pool and its children
@@ -183,14 +289,14 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
@@ -201,26 +307,37 @@ def lambda_handler(event, context):
                                                               device_uuid)
             zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
                                                             database_dict['pools_table'], org_uuid, pool_uuid)
-            current_device_pools = get_current_device_pools(cursor, device_uuid)
-            potential_device_pools = get_potential_device_pools(cursor, pool_uuid, device_uuid)
+            if is_input_device(cursor, device_uuid):
+                current_device_pools = get_current_input_device_pools(cursor, device_uuid)
+                if not current_device_pools:
+                    append_input_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
+                else:
+                    print(current_device_pools)
+                    print("ERROR: This device can only belong to one group")
+                    raise Exception(401,
+                                    "Error: This device can only belong to one group, please remove from existing group and try again")
 
-            if (all(elem in potential_device_pools for elem in
-                    current_device_pools)):  # check all pools in potential branch are in current branch (ensure device isnt in multiple branches)
-                append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
             else:
-                print("ERROR: New pool would be in different pool branch than current")
-                raise Exception(401, "Error: New pool would be in different pool branch than current")
+                current_device_pools = get_current_device_pools(cursor, device_uuid)
+                potential_device_pools = get_potential_device_pools(cursor, pool_uuid, device_uuid)
+
+                if (all(elem in potential_device_pools for elem in
+                        current_device_pools)):  # check all pools in potential branch are in current branch (ensure device isnt in multiple branches)
+                    append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
+                else:
+                    print("ERROR: New pool would be in different pool branch than current")
+                    raise Exception(401, "Error: New pool would be in different pool branch than current")
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        elif status_value == 401:  # if 401 then tree error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to add device to pool'
+
+        status_value = 500
+        body_value = 'Unable to add device to pool'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422 or status_value == 401:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

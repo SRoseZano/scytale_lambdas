@@ -40,7 +40,33 @@ status_lookup_data = [{
         "status_code": 4000,
         "status_message": "ERROR",
         "status_type_id": 3
-    }
+    },
+    {
+        "status_code": 3005,
+        "status_message": "Initialising",
+        "status_type_id": 2
+    },
+    {
+        "status_code": 3010,
+        "status_message": "Failed to communicate with device",
+        "status_type_id": 2
+    },
+
+    {
+        "status_code": 4010,
+        "status_message": "Failed to communicate with device",
+        "status_type_id": 3
+    },
+    {
+        "status_code": 4100,
+        "status_message": "Driver output short circuit",
+        "status_type_id": 3
+    },
+    {
+        "status_code": 4101,
+        "status_message": "Driver output open circuit",
+        "status_type_id": 3
+    },
 ]
 
 # Device type events and actions data
@@ -129,7 +155,8 @@ def lambda_handler(event, context):
                 hub_radios,
                 device_type_default_mappings,
                 device_type_actions,
-                device_type_events
+                device_type_events,
+                event_mapping_controls_lookup
             """
             cursor.execute(drop_tables)
 
@@ -292,8 +319,8 @@ def lambda_handler(event, context):
                 hub_name VARCHAR(255) NOT NULL,
                 organisationUUID VARCHAR(36) NOT NULL,
                 device_type_ID INT NOT NULL,
-                current_firmware VARCHAR(36) NOT NULL,
-                target_firmware VARCHAR(36),
+                current_firmware VARCHAR(36) DEFAULT '0.0.0',
+                target_firmware VARCHAR(36) DEFAULT '1.0.0',
                 PRIMARY KEY (hubUUID),
                 UNIQUE (serial),
                 FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
@@ -415,24 +442,36 @@ def lambda_handler(event, context):
                                           mapping_ID INT AUTO_INCREMENT PRIMARY KEY,
                                           event_ID INT NOT NULL,
                                           action_ID INT NOT NULL,
-                                          event_data INT,
+                                          action_data INT,
                                           priority INT NOT NULL,
                                           sequence INT NOT NULL,
                                           time_days TINYINT UNSIGNED NOT NULL,
                                           time_start SMALLINT UNSIGNED NOT NULL,
                                           time_stop SMALLINT UNSIGNED NOT NULL,
+                                          control_type_id INT,
                                           FOREIGN KEY (event_ID)
                                             REFERENCES device_type_events(event_ID)
                                             ON DELETE CASCADE,
                                           FOREIGN KEY (action_ID)
                                             REFERENCES device_type_actions(action_ID)
+                                            ON DELETE CASCADE,
+                                          FOREIGN KEY (control_type_id)
+                                            REFERENCES device_type_actions(control_ID)
                                             ON DELETE CASCADE
                                         );
                                    """
 
             cursor.execute(create_device_type_default_mappings_table)
 
+            # Create event mapping control type lookup table
+            create_event_mapping_controllers_table = """
+                                       CREATE TABLE event_mapping_controls_lookup (
+                                          control_ID INT PRIMARY KEY,
+                                          control_type VARCHAR(255) NOT NULL
+                                        );
+                                   """
 
+            cursor.execute(create_event_mapping_controllers_table)
 
             cursor.execute("SHOW TABLES;")
             result = cursor.fetchall()
@@ -467,6 +506,15 @@ def lambda_handler(event, context):
                     (5, 'EMERGENCY_LIGHT_ENDPOINT');
             """
             cursor.execute(insert_device_types)
+
+            insert_event_mapping_controls = """
+                   INSERT INTO event_mapping_controls_lookup (control_ID, control_type)
+                       VALUES 
+                           (1, 'Toggle'),
+                           (2, 'Slider'),
+                           (3, 'Time Picker');
+                   """
+            cursor.execute(insert_event_mapping_controls)
 
             # Insert into Permissions_Lookup table
             insert_operations = """

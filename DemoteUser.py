@@ -110,7 +110,8 @@ def demote_user(cursor, org_uuid, user_uuid, target_user_uuid):
 
         get_entry = f"""
                               SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID AND p.userUUID = %s AND a.organisationUUID = %s
+                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+                              WHERE p.userUUID = %s AND a.organisationUUID = %s
               """
         cursor.execute(get_entry, (target_user_uuid, org_uuid,))
         last_inserted_row = cursor.fetchall()
@@ -125,7 +126,8 @@ def demote_user(cursor, org_uuid, user_uuid, target_user_uuid):
         sql = f"""
             DELETE p
             FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID AND p.userUUID = %s AND a.organisationUUID = %s AND parentUUID IS NOT NULL;
+            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+            WHERE p.userUUID = %s AND a.organisationUUID = %s AND a.parentUUID IS NOT NULL;
             """
         cursor.execute(sql, (target_user_uuid, org_uuid))
 
@@ -185,14 +187,15 @@ def lambda_handler(event, context):
             can_user_be_demoted(cursor, org_uuid, user_uuid, target_user_uuid)
             demote_user(cursor, org_uuid, user_uuid, target_user_uuid)
             conn.commit()
-
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to demote user'
+
+        status_value = 500
+        body_value = 'Unable to demote user'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

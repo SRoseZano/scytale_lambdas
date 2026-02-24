@@ -35,24 +35,24 @@ def get_mapping_table(cursor):
         logging.info("Getting mapping details...")
         default_mapping_lookup_sql = f"""
 
-    SELECT 
-    COALESCE(e.device_type_ID, a.device_type_ID) AS device_type_ID,
-    m.event_ID,
-    m.action_ID,
-    m.event_data,
-    m.priority,
-    m.sequence,
-    m.time_days,
-    m.time_start,
-    m.time_stop,
-    e.event_number,
-    e.event_name,
-    a.action_number,
-    a.action_name
-FROM device_type_default_mappings m
-LEFT JOIN device_type_events e ON m.event_ID = e.event_ID
-LEFT JOIN device_type_actions a ON m.action_ID = a.action_ID
-ORDER BY device_type_ID, event_ID, action_ID;
+            SELECT 
+                a.device_type_ID as output_device_type,
+                e.device_type_ID as input_device_type,
+                m.event_ID,
+                m.action_ID,
+                m.action_data,
+                m.priority,
+                m.sequence,
+                m.time_days,
+                m.time_start,
+                m.time_stop,
+                e.event_number,
+                e.event_name,
+                a.action_number,
+                a.action_name
+            FROM device_type_default_mappings m
+            LEFT JOIN device_type_events e ON m.event_ID = e.event_ID
+            LEFT JOIN device_type_actions a ON m.action_ID = a.action_ID
 
 
         """
@@ -76,6 +76,66 @@ ORDER BY device_type_ID, event_ID, action_ID;
         traceback.print_exc()
         raise Exception(400, e)
 
+
+def transform_mapping(mapping_table):
+    print(mapping_table)
+    try:
+        logging.info("Transforming result...")
+        final_output = {}
+
+        for output_device_type, mappings in mapping_table.items():
+            if output_device_type not in final_output:
+                final_output[output_device_type] = {"inputs": {}}
+
+            for m in mappings:
+                input_device_type = m["input_device_type"]
+
+                # Ensure input_device_type exists
+                if input_device_type not in final_output[output_device_type]["inputs"]:
+                    final_output[output_device_type]["inputs"][input_device_type] = {
+                        "events": []
+                    }
+
+                # Build event dictionary
+                event = {
+                    "name": m["event_name"],
+                    "number": m["event_number"],
+                    "priority": m["priority"],
+                    "time": {
+                        "days": m["time_days"],
+                        "start": m["time_start"],
+                        "end": m["time_stop"]
+                    },
+                    "actions": [
+                        {
+                            "name": m["action_name"],
+                            "number": m["action_number"]
+                        }
+                    ]
+                }
+
+                # Add action_data only if it's not None
+                if m["action_data"] is not None:
+                    event["actions"][0]["data"] = m["action_data"]
+
+                # Check if an event with the same number already exists for this input
+                existing_events = final_output[output_device_type]["inputs"][input_device_type]["events"]
+                existing_event = next((e for e in existing_events if e["number"] == m["event_number"]), None)
+
+                if existing_event:
+                    # Append action if same event already exists
+                    existing_event["actions"].append(event["actions"][0])
+                else:
+                    # Otherwise, add a new event
+                    existing_events.append(event)
+
+        return final_output
+    except Exception as e:
+        logging.error(f"Error transforming mapping table: {e}")
+        traceback.print_exc()
+        raise Exception(400, e)
+
+
 def lambda_handler(event, context):
     try:
         database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
@@ -90,18 +150,20 @@ def lambda_handler(event, context):
         with (conn.cursor() as cursor):
 
             mapping_table = get_mapping_table(cursor)
+            transformed_mapping_table = transform_mapping(mapping_table)
 
             output_dict = {
-                "mapping_table": mapping_table,
+                "mapping_table": transformed_mapping_table,
             }
-
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to retrive device type default mappings table'
+
+        status_value = 500
+        body_value = 'Unable to retrieve device type default mappings table'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

@@ -26,7 +26,7 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
+def rename_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid):
     try:
         get_entry = f"""
                                            SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
@@ -42,11 +42,11 @@ def rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid):
             raise ValueError("Inital row not found for audit log.")
 
         logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET hub_name = %s WHERE organisationUUID = %s AND hubUUID = %s "
+        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET current_firmware = %s WHERE organisationUUID = %s AND hubUUID = %s "
 
-        cursor.execute(sql, (hub_name, org_uuid, hub_uuid))
+        cursor.execute(sql, (hub_firmware_uuid, org_uuid, hub_uuid))
 
-        sql_audit = sql % (hub_name, org_uuid, hub_uuid)
+        sql_audit = sql % (hub_firmware_uuid, org_uuid, hub_uuid)
 
         cursor.execute(get_entry, (org_uuid, hub_uuid,))
         last_inserted_row = cursor.fetchone()
@@ -80,18 +80,18 @@ def lambda_handler(event, context):
         body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        hub_name_raw = body_json.get('hub_name')
-        hub_uuid_raw = body_json.get('hub_uuid')
+        hub_firmware_raw = body_json.get('hub_firmware_uuid')
+        hub_uuid_raw = body_json.get('hub_UUID')
 
         variables = {
-            'hub_name': {'value': hub_name_raw['value'], 'value_type': 'string_input'},
+            'hub_firmware_uuid': {'value': hub_firmware_raw['value'], 'value_type': 'string'},
             'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
         }
 
         logging.info("Validating and cleansing user inputs...")
         variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
-        hub_name = variables['hub_name']['value']
+        hub_firmware_uuid = variables['hub_firmware_uuid']['value']
         hub_uuid = variables['hub_uuid']['value']
 
         with conn.cursor() as cursor:
@@ -114,14 +114,14 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
                                                            database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, hub_name, hub_uuid, org_uuid, user_uuid)
+            rename_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
 
         status_value = 500
-        body_value = 'Unable to update hub name'
+        body_value = 'Unable to update hub firmware'
         if len(e.args) >= 2 and isinstance(e.args[0], int):
             status_value = e.args[0]
             if status_value == 422:  # if 422 then validation error
@@ -132,7 +132,6 @@ def lambda_handler(event, context):
         }
         return error_response
 
-
     finally:
         try:
             cursor.close()
@@ -142,5 +141,5 @@ def lambda_handler(event, context):
 
     return {
         'statusCode': 200,
-        'body': 'Hub Name Updated Successfully',
+        'body': 'Hub Firmware Updated Successfully',
     }

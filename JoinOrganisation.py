@@ -49,62 +49,63 @@ def get_user_and_hub_id_by_email(cursor,
 def join_organisation(cursor, invite_code, login_user_hub, user_uuid):
     try:
         logging.info("Joining Organisation...")
-        if invite_code == 1:
-            get_organisation_uuid_sql = f""" SELECT DISTINCT organisationUUID, inviteID FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE invite_code = %s AND valid_until >= NOW() LIMIT 1 """
-        else:
+        if login_user_hub == 1:  # if joiner is hub user then dont worry about invite expiry
             get_organisation_uuid_sql = f""" SELECT DISTINCT organisationUUID, inviteID FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE invite_code = %s LIMIT 1 """
-        cursor.execute(get_organisation_uuid_sql, (invite_code,))
-        get_organisation_uuid_sql_result = cursor.fetchone()
-        if get_organisation_uuid_sql_result:
-            logging.info("OrganisationUUID found")
-            if get_organisation_uuid_sql_result[1] == 3 and login_user_hub == 1:  # if invite type is hub and the
-                join_organisation_sql = f""" INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} (userUUID, organisationUUID, permissionid) VALUES (%s, %s, 2);"""
-            else:
-                join_organisation_sql = f""" INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} (userUUID, organisationUUID, permissionid) VALUES (%s, %s, 3);"""
-            cursor.execute(join_organisation_sql, (user_uuid, get_organisation_uuid_sql_result[0]))
-            logging.info("User organisation relation created")
+    else:
+    get_organisation_uuid_sql = f""" SELECT DISTINCT organisationUUID, inviteID FROM {database_dict['schema']}.{database_dict['organisation_invites_table']} WHERE invite_code = %s AND valid_until >= NOW() LIMIT 1 """
 
-            get_inserted_row_sql = f"""
+
+cursor.execute(get_organisation_uuid_sql, (invite_code,))
+get_organisation_uuid_sql_result = cursor.fetchone()
+if get_organisation_uuid_sql_result:
+    logging.info("OrganisationUUID found")
+    if get_organisation_uuid_sql_result[1] == 3 and login_user_hub == 1:  # if invite type is hub and the
+        join_organisation_sql = f""" INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} (userUUID, organisationUUID, permissionid) VALUES (%s, %s, 2);"""
+    else:
+        join_organisation_sql = f""" INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} (userUUID, organisationUUID, permissionid) VALUES (%s, %s, 3);"""
+    cursor.execute(join_organisation_sql, (user_uuid, get_organisation_uuid_sql_result[0]))
+    logging.info("User organisation relation created")
+
+    get_inserted_row_sql = f"""
                             SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
                             WHERE organisationUUID = %s AND userUUID = %s LIMIT 1
                         """
-            cursor.execute(get_inserted_row_sql, (get_organisation_uuid_sql_result[0], user_uuid))
-            last_inserted_row = cursor.fetchone()
+    cursor.execute(get_inserted_row_sql, (get_organisation_uuid_sql_result[0], user_uuid))
+    last_inserted_row = cursor.fetchone()
 
-            get_org_uuid_sql = f"""
+    get_org_uuid_sql = f"""
                             SELECT organisationUUID FROM {database_dict['schema']}.{database_dict['organisations_table']}
                             WHERE organisationUUID = %s LIMIT 1
                         """
-            cursor.execute(get_org_uuid_sql, (get_organisation_uuid_sql_result[0],))
-            org_uuid = cursor.fetchone()[0]
+    cursor.execute(get_org_uuid_sql, (get_organisation_uuid_sql_result[0],))
+    org_uuid = cursor.fetchone()[0]
 
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-                row_dict = dict(zip(colnames, last_inserted_row))
+    if last_inserted_row:
+        colnames = [desc[0] for desc in cursor.description]
+        inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+        row_dict = dict(zip(colnames, last_inserted_row))
 
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['users_organisations_table'], 3, user_uuid, join_organisation_sql,
-                    '{}', inserted_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
+        zanolambdashelper.helpers.submit_to_audit_log(
+            cursor, database_dict['schema'], database_dict['audit_log_table'],
+            database_dict['users_organisations_table'], 3, user_uuid, join_organisation_sql,
+            '{}', inserted_row_json, org_uuid, user_uuid
+        )
+        logging.info("Audit log submitted successfully.")
+    else:
+        logging.error("No row found after insertion for audit logs.")
+        raise ValueError("Inserted row not found for audit log.")
 
-            return get_organisation_uuid_sql_result, org_uuid
-        else:
-            logging.error(f"Invite Code Invalid")
-            traceback.print_exc()
-            raise Exception(400)
-    except Exception as e:
-        logging.error(f"Error joining organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return get_organisation_uuid_sql_result, org_uuid
+else:
+    logging.error(f"Invalid invite code")
+    raise Exception(402, "Invalid invite code")
+except Exception as e:
+logging.error(f"Error joining organisation: {e}")
+traceback.print_exc()
+raise
 
 
-def configure_mqtt(cursor, user_identity,  org_uuid, user_uuid):
+def configure_mqtt(cursor, user_identity, org_uuid, user_uuid):
     try:
         logging.info("Configuring org policy to user identity...")
 
@@ -338,17 +339,19 @@ def lambda_handler(event, context):
             else:
                 append_user_to_default_pool(cursor, org_uuid, user_uuid)
 
-            configure_mqtt(cursor, user_identity,  org_uuid, user_uuid)
+            configure_mqtt(cursor, user_identity, org_uuid, user_uuid)
 
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable join organisation'
+
+        status_value = 500
+        body_value = 'Unable to join organisation'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422 or status_value == 402:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

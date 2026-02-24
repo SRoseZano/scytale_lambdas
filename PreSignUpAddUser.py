@@ -84,13 +84,15 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation
-            body_value = e.args[1]
-        elif isinstance(e, mysql.connector.Error) and e.errno == 1062:
-            body_value = "An account already exists with this email"
-        else:
-            body_value = 'Unable to create account'
+
+        status_value = 500
+        body_value = 'Unable to create account'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
+            elif isinstance(e, mysql.connector.Error) and e.errno == 1062:
+                body_value = "An account already exists with this email"
 
         raise Exception(body_value)
 

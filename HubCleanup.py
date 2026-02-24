@@ -57,14 +57,12 @@ def get_hub_accounts(cursor):
             FROM {database_dict['schema']}.{database_dict['users_table']} a
             LEFT JOIN {database_dict['schema']}.{database_dict['hubs_table']} b
                 ON a.hubUUID = b.hubUUID
-            INNER JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} c
+            LEFT JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} c
                 ON a.userUUID = c.userUUID
-            INNER JOIN {database_dict['schema']}.{database_dict['organisations_table']} d 
+            LEFT JOIN {database_dict['schema']}.{database_dict['organisations_table']} d 
                 ON c.organisationUUID = d.organisationUUID
-            WHERE a.first_name = 'John' 
-            AND a.last_name = 'Doe' 
-            AND a.email LIKE '%@zanocontrols.co.uk'
-            AND b.hubUUID IS NULL
+            WHERE a.hub_user = 1
+            AND b.hubUUID is null
         """
 
         cursor.execute(sql)
@@ -75,13 +73,14 @@ def get_hub_accounts(cursor):
             return [], []
 
         emails = []
-        email_identity_policy_tuples = []
+        identity_policy_tuples = []
 
         for email, identity_pool_id, associated_policy in result:
             emails.append(email)
-            email_identity_policy_tuples.append((email,identity_pool_id, associated_policy))
+            if identity_pool_id is not None and associated_policy is not None:
+                identity_policy_tuples.append((identity_pool_id, associated_policy))
 
-        return emails, email_identity_policy_tuples
+        return emails, identity_policy_tuples
 
     except Exception as e:
         logging.error(f"Error fetching hub accounts: {e}")
@@ -199,35 +198,32 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             hub_uuids = get_hub_uuids(cursor)
-            hub_emails, hub_email_policy_identity_pairs = get_hub_accounts(cursor)
+            hub_emails, hub_policy_identity_pairs = get_hub_accounts(cursor)
+
             if not hub_emails:
                 logging.info("No hub accounts found. Exiting script.")
                 return {
                     'statusCode': 200,
                     'body': 'No hub accounts to delete.'
                 }
+
             delete_hub_entries_from_db(cursor, hub_emails)
             delete_users_from_cognito(lambda_client, hub_emails)
             delete_users_from_iotcore(lambda_client, hub_uuids)
 
-            # Filter to get only the identity pairs for deleted emails
-            policy_identity_pairs_to_delete = [
-                (identity_pool_id, associated_policy)
-                for _, identity_pool_id, associated_policy in hub_email_policy_identity_pairs
-            ]
-
-            detach_users_from_policy(lambda_client, policy_identity_pairs_to_delete)
+            detach_users_from_policy(lambda_client, hub_policy_identity_pairs)
 
             conn.commit()
 
-
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to delete hub account'
+
+        status_value = 500
+        body_value = 'Unable to delete hub account'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,
@@ -245,5 +241,3 @@ def lambda_handler(event, context):
         'statusCode': 200,
         'body': 'Hub Accounts Deleted Successfully'
     }
-
-

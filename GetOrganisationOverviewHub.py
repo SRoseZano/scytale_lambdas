@@ -34,6 +34,9 @@ print("gotten the client")
 
 zanolambdashelper.helpers.set_logging('INFO')
 
+driver_devices = [2, 5]
+controller_devices = [3, 4]
+
 
 def get_organisation_details(cursor, user_uuid):
     try:
@@ -128,6 +131,7 @@ def get_organisation_invite_code(cursor, org_uuid, organisation_details):
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def merge_pools_users_devices(pool_details, pools_devices):
     try:
         logging.info("Merging pools, users, and devices...")
@@ -144,27 +148,60 @@ def merge_pools_users_devices(pool_details, pools_devices):
         raise Exception(400, e)
 
 
-def get_pool_details(cursor, org_uuid):
+def get_pool_details(cursor, org_uuid, device_uuid_to_id):
     try:
-        logging.info("Getting pool details...")
-        pools_sql = f"""
-            SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
-            FROM {database_dict['schema']}.{database_dict['pools_table']} a 
-            WHERE a.organisationUUID = '{org_uuid}'
-        """
-        cursor.execute(pools_sql)
-        pools_result = cursor.fetchall()
+        if not device_uuid_to_id:
+            logging.info("No device UUIDs provided — returning empty pool details.")
+            return {}
+        logging.info("Getting list of deviceUUIDS...")
+        light_placeholders = ', '.join(['%s'] * len(driver_devices))
+        controller_placeholders = ', '.join(['%s'] * len(controller_devices))
 
+        logging.info("Getting list of deviceUUIDs...")
+        device_uuids = list(device_uuid_to_id.keys())
+        device_placeholders = ', '.join(['%s'] * len(device_uuids))
+
+        logging.info("Getting pool details...")
+        # Find all groups with controllers
+        # join table on itsef to get rows that dont have their poolUUID as parentUUIDs of other rows (find lowest child)
+        # get all groups with lighting devices
+        # union all lowest level groups with controllers
+        pools_sql = f"""
+            WITH controllers_groups AS ( 
+                SELECT DISTINCT a.poolUUID,  a.parentUUID 
+                FROM {database_dict['schema']}.{database_dict['pools_table']} a
+                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b ON a.poolUUID = b.poolUUID
+                JOIN {database_dict['schema']}.{database_dict['devices_table']} d ON b.deviceUUID = d.deviceUUID
+                WHERE d.device_type_id IN ({controller_placeholders}) AND a.organisationUUID = %s
+            )
+
+            SELECT DISTINCT a.poolUUID, a.parentUUID 
+            FROM {database_dict['schema']}.{database_dict['pools_table']} a
+            JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b ON a.poolUUID = b.poolUUID
+            JOIN {database_dict['schema']}.{database_dict['devices_table']} d ON b.deviceUUID = d.deviceUUID
+            WHERE d.device_type_id IN ({light_placeholders}) AND a.organisationUUID = %s AND d.deviceUUID IN ({device_placeholders})
+
+            UNION
+
+            SELECT poolUUID,  parentUUID 
+            FROM controllers_groups
+        ;
+        """
+
+        cursor.execute(pools_sql, (controller_devices + [org_uuid] + driver_devices + [org_uuid] + device_uuids))
+        pools_result = cursor.fetchall()
+        print(pools_result)
         if pools_result:
             pool_uuids = {pool[0] for pool in pools_result}
 
             # Create a mapping of UUIDs to sequential integers
             uuid_to_int = {uuid: idx + 1 for idx, uuid in enumerate(pool_uuids)}
 
-            processed_result = [(uuid_to_int[pool[0]], pool[0], pool[1], uuid_to_int.get(pool[2], None)) for pool in
+            processed_result = [(uuid_to_int[pool[0]], pool[0], uuid_to_int.get(pool[1], None)) for pool in
                                 pools_result]
-            pools_details = {pool[0]: {'Details': {'poolUUID': pool[1], 'pool_name': pool[2], 'parentUUID': pool[3]}}
+            pools_details = {pool[0]: {'Details': {'poolUUID': pool[1], 'parentUUID': pool[2]}}
                              for pool in processed_result}
+            print(pools_details)
             return pools_details
         else:
             return {}
@@ -174,20 +211,44 @@ def get_pool_details(cursor, org_uuid):
         raise Exception(400, e)
 
 
-
-
-def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id):
+def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id, hub_uuid):
     try:
         logging.info("Getting device details...")
         if organisation_details and (organisation_details['permissionid'] <= 2):
-            devices_details_sql = f"""
-                SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
-                FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-                WHERE organisationUUID = '{org_uuid}'
-            """
-            cursor.execute(devices_details_sql)
-            devices_details_result = cursor.fetchall()
 
+            light_placeholders = ', '.join(['%s'] * len(driver_devices))
+            controller_placeholders = ', '.join(['%s'] * len(controller_devices))
+
+            devices_details_sql = f"""
+                WITH lighting_devices AS (
+                    SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address, a.device_type_id, a.associated_hub
+                    FROM {database_dict['schema']}.{database_dict['devices_table']} a 
+                    WHERE organisationUUID = %s AND associated_hub = %s AND device_type_id IN ({light_placeholders})
+                ),
+
+                controller_devices AS (
+                    SELECT DISTINCT d.deviceUUID, d.long_address, d.short_address, d.device_type_id, d.associated_hub
+                    FROM lighting_devices a 
+                    INNER JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID
+                    INNER JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} c on b.poolUUID = c.poolUUID
+                    INNER JOIN {database_dict['schema']}.{database_dict['devices_table']} d on c.deviceUUID = d.deviceUUID
+                    WHERE d.organisationUUID = %s AND d.device_type_id IN ({controller_placeholders}) 
+                ),
+
+                controller_hub_associated AS (
+                    SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address, a.device_type_id, a.associated_hub
+                    FROM {database_dict['schema']}.{database_dict['devices_table']} a 
+                    WHERE organisationUUID = %s AND associated_hub = %s AND device_type_id IN ({controller_placeholders})
+                )
+
+
+                SELECT * FROM lighting_devices UNION SELECT * FROM controller_devices UNION SELECT * FROM controller_hub_associated
+            """
+            cursor.execute(devices_details_sql, (
+                    [org_uuid] + [hub_uuid] + driver_devices + [org_uuid] + controller_devices + [org_uuid] + [
+                hub_uuid] + controller_devices))
+            devices_details_result = cursor.fetchall()
+            print(devices_details_result)
             if devices_details_result:
                 # Generate integer-based IDs for devices
                 device_uuid_to_id = {device[0]: idx + 1 for idx, device in enumerate(devices_details_result)}
@@ -197,10 +258,8 @@ def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id):
                             "deviceUUID": device[0],
                             "long_address": device[1],
                             "short_address": device[2],
-                            "device_name": device[3],
-                            "registrant": device[4],
-                            "device_type_id": device[5],
-                            "associated_hub": hub_uuid_to_id.get(device[6])  # Convert UUID to integer ID
+                            "device_type_id": device[3],
+                            "associated_hub": hub_uuid_to_id.get(device[4])  # Convert UUID to integer ID
                         }
                     }
                     for device in devices_details_result
@@ -214,7 +273,7 @@ def get_device_details(cursor, org_uuid, organisation_details, hub_uuid_to_id):
         raise Exception(400, e)
 
 
-def get_pools_devices(cursor, device_uuid_to_id):
+def get_pools_devices(cursor, device_uuid_to_id, org_uuid):
     try:
         logging.info("Getting pools and associated devices...")
         if not device_uuid_to_id:
@@ -223,13 +282,52 @@ def get_pools_devices(cursor, device_uuid_to_id):
         device_uuids = list(device_uuid_to_id.keys())
         placeholders = ",".join(["%s"] * len(device_uuids))
 
+        light_placeholders = ', '.join(['%s'] * len(driver_devices))
+        controller_placeholders = ', '.join(['%s'] * len(controller_devices))
+
+        logging.info("Getting list of deviceUUIDs...")
+        device_uuids = list(device_uuid_to_id.keys())
+        device_placeholders = ', '.join(['%s'] * len(device_uuids))
+
+        # similar logic to getting all relevant groups
+        # Find all groups/device pairs with controllers
+        # join table on itsef to get rows that dont have their poolUUID as parentUUIDs of other rows (find lowest child)
+        # get all groups/pairs with lighting devices
+        # union in all lowest level groups with controllers
+
         devices_pools_sql = f"""
-            SELECT DISTINCT a.deviceUUID, a.poolUUID
-            FROM {database_dict['schema']}.{database_dict['pools_devices_table']} a
-            WHERE a.deviceUUID IN ({placeholders})
+
+            WITH controllers_groups AS ( 
+                SELECT DISTINCT a.poolUUID, d.deviceUUID, a.parentUUID
+                FROM {database_dict['schema']}.{database_dict['pools_table']} a
+                JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b ON a.poolUUID = b.poolUUID
+                JOIN {database_dict['schema']}.{database_dict['devices_table']} d ON b.deviceUUID = d.deviceUUID 
+                WHERE d.device_type_id IN ({controller_placeholders}) AND a.organisationUUID = %s
+            ),
+
+
+            lowest_child_controllers AS ( 
+                SELECT rc.poolUUID, rc.deviceUUID
+                FROM controllers_groups rc
+                LEFT JOIN controllers_groups ra ON rc.poolUUID = ra.parentUUID
+                WHERE ra.parentUUID IS NULL 
+            )
+
+            SELECT DISTINCT d.deviceUUID, b.poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_devices_table']} b
+            JOIN {database_dict['schema']}.{database_dict['devices_table']} d ON b.deviceUUID = d.deviceUUID
+            WHERE d.device_type_id IN ({light_placeholders}) AND d.organisationUUID = %s AND d.deviceUUID IN ({device_placeholders})
+
+            UNION
+
+            SELECT deviceUUID, poolUUID
+            FROM lowest_child_controllers
+
         """
-        cursor.execute(devices_pools_sql, tuple(device_uuids))
+        cursor.execute(devices_pools_sql,
+                       (controller_devices + [org_uuid] + driver_devices + [org_uuid] + device_uuids))
         devices_pools_result = cursor.fetchall()
+        print(devices_pools_result)
 
         pool_devices_dict = {}
         for device_uuid, pool_uuid in devices_pools_result:
@@ -247,7 +345,7 @@ def get_pools_devices(cursor, device_uuid_to_id):
         raise Exception(400, e)
 
 
-def get_hub_details(cursor, org_uuid, organisation_details):
+def get_hub_details(cursor, org_uuid, organisation_details, hub_uuid):
     try:
         logging.info("Getting hub details...")
 
@@ -255,13 +353,14 @@ def get_hub_details(cursor, org_uuid, organisation_details):
             return {}, {}
 
         hub_details_sql = f"""
-            SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id,
+            SELECT DISTINCT a.hubUUID, a.serial, a.device_type_id,
                             b.long_address, b.short_address
             FROM {database_dict['schema']}.{database_dict['hubs_table']} a
             LEFT JOIN {database_dict['schema']}.{database_dict['hub_radios_table']} b
-            ON a.hubUUID = b.hubUUID AND a.organisationUUID = %s
+            ON a.hubUUID = b.hubUUID 
+            WHERE a.hubUUID = %s AND a.organisationUUID = %s 
         """
-        cursor.execute(hub_details_sql, (org_uuid,))
+        cursor.execute(hub_details_sql, (hub_uuid, org_uuid,))
         hub_details_result = cursor.fetchall()
 
         if not hub_details_result:
@@ -270,14 +369,12 @@ def get_hub_details(cursor, org_uuid, organisation_details):
         # Group radios by hubUUID
         hub_map = {}
         for row in hub_details_result:
-            hub_uuid, serial, hub_name, registrant, device_type_id, long_addr, short_addr = row
+            hub_uuid, serial, device_type_id, long_addr, short_addr = row
 
             if hub_uuid not in hub_map:
                 hub_map[hub_uuid] = {
                     'hubUUID': hub_uuid,
                     'serial': serial,
-                    'hub_name': hub_name,
-                    'registrant': registrant,
                     'device_type_id': device_type_id,
                     'radios': []
                 }
@@ -301,7 +398,6 @@ def get_hub_details(cursor, org_uuid, organisation_details):
         raise Exception(400, e)
 
 
-
 def lambda_handler(event, context):
     try:
         database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
@@ -310,8 +406,21 @@ def lambda_handler(event, context):
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
-        body_json = event['params']['querystring']
+        body_json = event['body-json']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
+
+        # Extract relevant attributes
+        print(body_json)
+        hub_uuid_raw = body_json.get('hub_uuid')
+
+        variables = {
+            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
+        }
+
+        logging.info("Validating and cleansing user inputs...")
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+
+        hub_uuid = variables['hub_uuid']['value']
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
@@ -319,11 +428,15 @@ def lambda_handler(event, context):
             organisation_details = get_organisation_details(cursor, user_uuid)
             if organisation_details:
                 organisation_uuid = organisation_details['organisationUUID']
-                hub_details, hub_uuid_to_id = get_hub_details(cursor, organisation_uuid, organisation_details)
+                hub_details, hub_uuid_to_id = get_hub_details(cursor, organisation_uuid, organisation_details, hub_uuid)
+
                 device_details, device_uuid_to_id = get_device_details(cursor, organisation_uuid,
-                                                                       organisation_details, hub_uuid_to_id)
-                pools_details = get_pool_details(cursor, organisation_uuid)
-                pools_devices = get_pools_devices(cursor, device_uuid_to_id)
+                                                                       organisation_details, hub_uuid_to_id, hub_uuid)
+
+                pools_details = get_pool_details(cursor, organisation_uuid,
+                                                 device_uuid_to_id)  # parse the device mapping to get related groups
+
+                pools_devices = get_pools_devices(cursor, device_uuid_to_id, organisation_uuid)
                 pools_merged = merge_pools_users_devices(pools_details, pools_devices)
 
                 output_dict = {
@@ -337,11 +450,13 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422:  # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to retrieve organisation details'
+
+        status_value = 500
+        body_value = 'Unable to retrieve organisation details'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,

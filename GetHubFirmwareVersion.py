@@ -13,7 +13,7 @@ import zanolambdashelper
 
 database_details = zanolambdashelper.helpers.get_db_details()
 
-gateway_url = 'https://zuxtyllg91.execute-api.eu-west-2.amazonaws.com/Dev/download_hub_firmware/'
+gateway_url = 'https://1bchjufgwh.execute-api.eu-west-2.amazonaws.com/Prod/download_hub_firmware/'
 
 rds_host = database_details['rds_host']
 rds_port = database_details['rds_port']
@@ -23,16 +23,17 @@ rds_region = database_details['rds_region']
 
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
-rds_client =  zanolambdashelper.helpers.create_client('rds') 
+rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
+
 
 def check_firmware_version(cursor, hub_UUID):
     try:
         logging.info("Executing SQL query checking current firmware version to target ")
-        
+
         sql = f"""
-        
+
             SELECT 
                 CASE 
                     WHEN current_firmware != target_firmware THEN target_firmware
@@ -52,17 +53,19 @@ def check_firmware_version(cursor, hub_UUID):
                 return target_firmware[0]
         else:
             return None
-        
+
     except Exception as e:
         logging.error(f"Error obtaining hub firmware: {e}")
         traceback.print_exc()
         raise Exception(400, e)
 
+
 def lambda_handler(event, context):
     try:
-        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port, rds_region)
+        database_token = zanolambdashelper.helpers.generate_database_token(rds_client, rds_user, rds_host, rds_port,
+                                                                           rds_region)
 
-        conn = zanolambdashelper.helpers.initialise_connection(rds_user,database_token,rds_db,rds_host,rds_port)
+        conn = zanolambdashelper.helpers.initialise_connection(rds_user, database_token, rds_db, rds_host, rds_port)
         conn.autocommit = False
 
         auth_token = event['params']['header']['Authorization']
@@ -71,37 +74,44 @@ def lambda_handler(event, context):
 
         # Extract relevant attributes
         hub_uuid_raw = body_json.get('hub_UUID')
-        
+
         variables = {
-            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': hub_uuid_raw['value_type']},
+            'hub_uuid': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
         }
-        
+
         logging.info("Validating and cleansing user inputs...")
-        variables =  zanolambdashelper.helpers.validate_and_cleanse_values(variables)
+        variables = zanolambdashelper.helpers.validate_and_cleanse_values(variables)
 
         hub_uuid = variables['hub_uuid']['value']
 
         with conn.cursor() as cursor:
-                user_uuid = zanolambdashelper.helpers.get_user_id_by_email(cursor, database_dict['schema'], database_dict['users_table'], user_email)
-                org_uuid = zanolambdashelper.helpers.get_user_organisation(cursor, database_dict['schema'],database_dict['users_organisations_table'], user_uuid)
-                zanolambdashelper.helpers.is_user_org_admin(cursor,database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
-                
-                target_firmware = check_firmware_version(cursor, hub_uuid)
-                
-                print(target_firmware)
-                
-                if target_firmware is not None:
-                    output_dict = {'update': 1, 'target_firmware_version': gateway_url+target_firmware}
-                else:
-                    output_dict = {'update': 0}
+            user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor, database_dict['schema'],
+                                                                            database_dict['users_table'], user_email)
+            org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
+
+            zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
+                                                        database_dict['users_organisations_table'], user_uuid, org_uuid)
+
+            target_firmware = check_firmware_version(cursor, hub_uuid)
+
+            if target_firmware is not None:
+                output_dict = {'update': 1, 'target_firmware_version': gateway_url + target_firmware}
+            else:
+                output_dict = {'update': 0}
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-        status_value = e.args[0]
-        if status_value == 422: # if 422 then validation error
-            body_value = e.args[1]
-        else:
-            body_value = 'Unable to retrive hub firmware details'
+
+        status_value = 500
+        body_value = 'Unable to retrieve hub firmware details'
+        if len(e.args) >= 2 and isinstance(e.args[0], int):
+            status_value = e.args[0]
+            if status_value == 422:  # if 422 then validation error
+                body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
             'body': body_value,
