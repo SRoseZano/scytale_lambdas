@@ -156,7 +156,8 @@ def lambda_handler(event, context):
                 device_type_default_mappings,
                 device_type_actions,
                 device_type_events,
-                event_mapping_controls_lookup
+                event_mapping_controls_lookup,
+                device_status_log
             """
             cursor.execute(drop_tables)
 
@@ -472,6 +473,32 @@ def lambda_handler(event, context):
                                    """
 
             cursor.execute(create_event_mapping_controllers_table)
+
+            #Create device staus log table
+            create_device_status_log_table = """
+            CREATE TABLE device_status_log (
+                logUUID SERIAL PRIMARY KEY, 
+                organisationUUID VARCHAR(36) NOT NULL,
+                organisation_name VARCHAR(255) NOT NULL,
+                deviceUUID VARCHAR(36) NOT NULL,
+                device_type_ID INT NOT NULL,
+                device_long_address VARCHAR(16),
+                associated_hubUUID VARCHAR(36),
+                associated_hub_serial VARCHAR(64),
+                status_code INT NOT NULL,
+                status_message VARCHAR(255),
+                status_type VARCHAR(255),
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX (organisationUUID),
+                INDEX (status_code),
+                INDEX (associated_hubUUID),
+                INDEX (associated_hub_serial),
+                INDEX (deviceUUID),
+                INDEX (device_long_address)
+            );
+            """
+
+            cursor.execute(create_device_status_log_table)
 
             cursor.execute("SHOW TABLES;")
             result = cursor.fetchall()
