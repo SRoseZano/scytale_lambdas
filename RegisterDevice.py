@@ -48,107 +48,52 @@ def generate_unique_short_address(cursor, org_uuid):
             raise Exception("Unable to generate a unique short address after many attempts.")
 
 
-
-
 def get_org_device_count(cursor, org_uuid):
-    try:
-        logging.info("Fetching org device count...")
-        sql = f"SELECT COUNT(DISTINCT deviceUUID) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationUUID = %s"
-        cursor.execute(sql, (org_uuid,))
-        return cursor.fetchone()[0]
-    except Exception as e:
-        logging.error(f"Error fetching org device count: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Fetching org device count...")
+
+    sql = f"SELECT COUNT(DISTINCT deviceUUID) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationUUID = %s"
+    cursor.execute(sql, (org_uuid,))
+    device_uuid, = cursor.fetchone()
+
+    return device_uuid
 
 
 def get_default_pool_id(cursor, org_uuid):
-    try:
-        logging.info("Fetching default pool UUID...")
-        sql = f"SELECT poolUUID FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s and parentUUID is null"
-        cursor.execute(sql, (org_uuid,))
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-        else:
-            raise ValueError("Unable to gather default pool")
-    except Exception as e:
-        logging.error(f"Error fetching default pool UUID: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Fetching default pool UUID...")
+
+    sql = f"SELECT poolUUID FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s and parentUUID is null"
+    cursor.execute(sql, (org_uuid,))
+
+    result = cursor.fetchone()
+
+    if result:
+        pool_uuid, = result
+        return pool_uuid
+    else:
+        raise Exception("Unable to gather default pool")
 
 
 def create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email, device_name,
-                   org_uuid, user_uuid):
-    try:
-        logging.info("Creating device entry...")
-        device_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, device_name)
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (deviceUUID, long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
-                VALUES (%s,%s, %s, %s, %s,%s, %s, %s)"
-        cursor.execute(sql, (
+                  org_uuid, user_uuid):
+    logging.info("Creating device entry...")
+
+    device_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, device_name)
+
+    sql = f"INSERT INTO {database_dict['schema']}.{database_dict['devices_table']} (deviceUUID, long_address, short_address, device_type_id, associated_hub, registrant, device_name, organisationUUID) \
+            VALUES (%s,%s, %s, %s, %s,%s, %s, %s)"
+
+    cursor.execute(sql, (
         device_uuid, long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid))
 
-        sql_audit = sql % (
-        device_uuid, long_address, short_address, device_type_id, associated_hub, user_email, device_name, org_uuid)
-
-
-        get_entry = f"""
-                        SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                        WHERE deviceUUID = %s;
-        """
-        cursor.execute(get_entry, (device_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, org_uuid, sql_audit,
-            '{}', current_row_json, org_uuid, user_uuid
-        )
-
-        return device_uuid
-    except Exception as e:
-        logging.error(f"Error creating device entry: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    return device_uuid
 
 
 def add_device_to_default_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
-    try:
-        logging.info("Adding device to default pool...")
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolUUID, deviceUUID) VALUES (%s, %s)"
-        cursor.execute(sql, (pool_uuid, device_uuid))
-        sql_audit = sql % (pool_uuid, device_uuid)
+    logging.info("Adding device to default pool...")
 
-        get_entry = f"""
-                    SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']}
-                    WHERE deviceUUID = %s and poolUUID = %s;
-                """
-        cursor.execute(get_entry, (device_uuid, pool_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+    sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (poolUUID, deviceUUID) VALUES (%s, %s)"
 
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_devices_table'], 3, pool_uuid, sql_audit,
-            '{}', current_row_json, org_uuid, user_uuid
-        )
-
-    except Exception as e:
-        logging.error(f"Error adding device to default pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
-
+    cursor.execute(sql, (pool_uuid, device_uuid))
 
 
 def lambda_handler(event, context):
@@ -188,14 +133,14 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
@@ -209,7 +154,7 @@ def lambda_handler(event, context):
 
             short_address = generate_unique_short_address(cursor, org_uuid)
             device_uuid = create_device(cursor, long_address, short_address, device_type_id, associated_hub, user_email,
-                                      device_name, org_uuid, user_uuid)
+                                        device_name, org_uuid, user_uuid)
             pool_uuid = get_default_pool_id(cursor, org_uuid)
             add_device_to_default_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
             device_topic = device_uuid
@@ -217,7 +162,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to register device'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

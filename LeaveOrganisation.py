@@ -30,175 +30,104 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def is_user_admin(cursor, user_uuid, org_uuid):
-    try:
-        logging.info("Executing SQL query to check is user is admin of organisation...")
-        sql = f"""
-            SELECT COUNT(DISTINCT userUUID)
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            WHERE permissionID = 1 AND organisationUUID = %s AND userUUID = %s
-            """
-        cursor.execute(sql, (org_uuid, user_uuid))
-        return cursor.fetchone()[0]
+    logging.info("Executing SQL query to check is user is admin of organisation...")
 
-    except Exception as e:
-        logging.error(f"Error checking user is an admin of organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    sql = f"""
+        SELECT COUNT(DISTINCT userUUID)
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
+        WHERE permissionID = 1 AND organisationUUID = %s AND userUUID = %s
+        """
+    cursor.execute(sql, (org_uuid, user_uuid))
+
+    count, = cursor.fetchone()
+
+    return count
 
 
 def get_org_admin_count(cursor, org_uuid, user_uuid):
-    try:
-        logging.info("Executing SQL query to check amount of admins in organisation...")
-        sql = f"""
-            SELECT COUNT(DISTINCT a.userUUID)
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            JOIN {database_dict['schema']}.{database_dict['users_table']} b ON a.userUUID = b.userUUID
-            WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0 AND a.userUUID <> %s
-            """
-        cursor.execute(sql, (org_uuid, user_uuid))
-        return cursor.fetchone()[0]
+    logging.info("Executing SQL query to check amount of admins in organisation...")
 
-    except Exception as e:
-        logging.error(f"Error counting admin users in organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    sql = f"""
+        SELECT COUNT(DISTINCT a.userUUID)
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
+        JOIN {database_dict['schema']}.{database_dict['users_table']} b ON a.userUUID = b.userUUID
+        WHERE a.permissionID = 1 AND a.organisationUUID = %s and b.hub_user = 0 AND a.userUUID <> %s
+        """
+    cursor.execute(sql, (org_uuid, user_uuid))
+
+    count, = cursor.fetchone()
+
+    return count
 
 
 def remove_user_from_organisation(cursor, org_uuid, user_uuid):
-    try:
+    logging.info("Executing SQL query to remove user from organisation...")
 
-        get_entry = f"""
-                               SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']} 
-                               WHERE userUUID = %s AND organisationUUID = %s
-                               LIMIT 1
-               """
-        cursor.execute(get_entry, (user_uuid, org_uuid))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+    sql = f"""
+        DELETE c
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']} c
+        WHERE c.userUUID = %s AND c.organisationUUID = %s
+        """
+    cursor.execute(sql, (user_uuid, org_uuid))
 
-        logging.info("Executing SQL query to remove user from organisation...")
-        sql = f"""
-            DELETE c
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']} c
-            WHERE c.userUUID = %s AND c.organisationUUID = %s
-            """
-        cursor.execute(sql, (user_uuid, org_uuid))
+    logging.info("Executing SQL query to remove user from any of the organisation pools...")
 
-        sql_audit = sql % (user_uuid, org_uuid)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 2, user_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid
-        )
-        logging.info("Audit log submitted successfully.")
-
-        get_entry = f"""
-                                      SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} p
-                                      INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
-                                      WHERE p.userUUID = %s AND a.organisationUUID = %s
-                      """
-        cursor.execute(get_entry, (user_uuid, org_uuid))
-        last_inserted_row = cursor.fetchall()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        logging.info("Executing SQL query to remove user from any of the organisation pools...")
-        sql = f"""
-            DELETE p
-            FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
-            WHERE p.userUUID = %s AND a.organisationUUID = %s
-            """
-        cursor.execute(sql, (user_uuid, org_uuid))
-
-        sql_audit = sql % (user_uuid, org_uuid)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 2, user_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid
-        )
-        logging.info("Audit log submitted successfully.")
-
-    except Exception as e:
-        logging.error(f"Error removing user from organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    sql = f"""
+        DELETE p
+        FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
+        INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+        WHERE p.userUUID = %s AND a.organisationUUID = %s
+        """
+    cursor.execute(sql, (user_uuid, org_uuid))
 
 
 def retrieve_org_policy(cursor, org_uuid):
-    try:
-        logging.info("Retrieving IoT policy name... ")
-        # Fetch associated policy and organisation UUID
-        sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
-        cursor.execute(sql, (org_uuid,))
-        result = cursor.fetchone()
-        policy_name = result[0]
+    logging.info("Retrieving IoT policy name... ")
 
-        return policy_name
+    # Fetch associated policy and organisation UUID
+    sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
 
-    except Exception as e:
-        logging.error(f"Error retrieving policy: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    cursor.execute(sql, (org_uuid,))
+
+    result = cursor.fetchone()
+    policy_name, = result
+
+    return policy_name
 
 
 def retrieve_user_identity(cursor, user_uuid):
-    try:
-        logging.info("Retrieving users identity... ")
-        sql = f"SELECT identity_pool_id FROM {database_dict['users_table']} WHERE userUUID = %s;"
-        cursor.execute(sql, (user_uuid,))
-        result = cursor.fetchone()
-        identity = result[0]
+    logging.info("Retrieving users identity... ")
 
-        return identity
+    sql = f"SELECT identity_pool_id FROM {database_dict['users_table']} WHERE userUUID = %s;"
+    cursor.execute(sql, (user_uuid,))
+    result = cursor.fetchone()
 
-    except Exception as e:
-        logging.error(f"Error retrieving identity: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    identity, = result
+
+    return identity
 
 
 def detach_org_policy(cursor, org_uuid, user_uuid):
-    try:
-        policy_name = retrieve_org_policy(cursor, org_uuid)
-        user_identity = retrieve_user_identity(cursor, user_uuid)
+    policy_name = retrieve_org_policy(cursor, org_uuid)
+    user_identity = retrieve_user_identity(cursor, user_uuid)
 
-        print(policy_name, user_identity)
+    logging.info("Detaching IoT policy to user identity...")
 
-        logging.info("Detaching IoT policy to user identity...")
+    # Run policy attach lambda
+    response = lambda_client.invoke(
+        FunctionName=policy_detach_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({"policy_name": policy_name, "user_identity": user_identity})
+    )
+    logging.info("Policy detached")
 
-        # Run policy attach lambda
-        response = lambda_client.invoke(
-            FunctionName=policy_detach_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({"policy_name": policy_name, "user_identity": user_identity})
-        )
-        logging.info("Policy detached")
+    response_payload = response['Payload'].read().decode('utf-8')
+    logging.info(response_payload)
 
-        response_payload = response['Payload'].read().decode('utf-8')
-        logging.info(response_payload)
-
-        if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, {response_payload})
-
-    except Exception as e:
-        logging.error(f"Error detaching user from policy: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
 
 def lambda_handler(event, context):
@@ -247,12 +176,13 @@ def lambda_handler(event, context):
                 detach_org_policy(cursor, org_uuid, user_uuid)
             else:
                 logging.error(f"User is trying to leave under another users id")
-                raise Exception(400, "User is trying to leave under another users id")
+                raise Exception("User is trying to leave under another users id")
+
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to leave organisation'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

@@ -27,45 +27,11 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def rename_user(cursor, user_first_name, user_last_name, user_uuid, org_uuid):
-    try:
-        get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['users_table']}
-                                           WHERE userUUID = %s;
-                           """
-        cursor.execute(get_entry, (user_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+    logging.info("Updating User...")
 
-        logging.info("Updating User...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['users_table']} SET first_name = %s, last_name = %s WHERE userUUID = %s "
+    sql = f"UPDATE {database_dict['schema']}.{database_dict['users_table']} SET first_name = %s, last_name = %s WHERE userUUID = %s "
 
-        cursor.execute(sql, (user_first_name, user_last_name, user_uuid))
-
-        sql_audit = sql % (user_first_name, user_last_name, user_uuid)
-
-        cursor.execute(get_entry, (user_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_table'], 3, user_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid)
-
-    except Exception as e:
-        logging.error(f"Error updating user name: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (user_first_name, user_last_name, user_uuid))
 
 
 def lambda_handler(event, context):
@@ -99,22 +65,21 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
-
-            rename_user(cursor,  first_name, last_name, user_uuid, org_uuid)
+            rename_user(cursor, first_name, last_name, user_uuid, org_uuid)
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to update users name'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

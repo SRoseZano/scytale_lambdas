@@ -105,7 +105,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to create hub cognito account'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

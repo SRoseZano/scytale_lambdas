@@ -26,46 +26,12 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 zanolambdashelper.helpers.set_logging('INFO')
 
 
-def rename_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid):
-    try:
-        get_entry = f"""
-                                           SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                           WHERE organisationUUID = %s AND hubUUID = %s;
-                           """
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+def update_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid):
+    logging.info("Update hub firmware version")
 
-        logging.info("Creating pool...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET current_firmware = %s WHERE organisationUUID = %s AND hubUUID = %s "
+    sql = f"UPDATE {database_dict['schema']}.{database_dict['hubs_table']} SET current_firmware = %s WHERE organisationUUID = %s AND hubUUID = %s "
 
-        cursor.execute(sql, (hub_firmware_uuid, org_uuid, hub_uuid))
-
-        sql_audit = sql % (hub_firmware_uuid, org_uuid, hub_uuid)
-
-        cursor.execute(get_entry, (org_uuid, hub_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 3, hub_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid)
-
-    except Exception as e:
-        logging.error(f"Error updating pool name: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (hub_firmware_uuid, org_uuid, hub_uuid))
 
 
 def lambda_handler(event, context):
@@ -106,7 +72,6 @@ def lambda_handler(event, context):
                                                                                    'users_organisations_table'],
                                                                                user_uuid)
 
-            print(database_dict['schema'], database_dict['users_organisations_table'], user_uuid, org_uuid)
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
@@ -114,12 +79,12 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_target_hub_in_org(cursor, database_dict['schema'],
                                                            database_dict['hubs_table'], org_uuid, hub_uuid)
 
-            rename_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid)
+            update_hub(cursor, hub_firmware_uuid, hub_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to update hub firmware'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

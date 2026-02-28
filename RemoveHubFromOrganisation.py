@@ -25,40 +25,14 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 
 
 def delete_hub_from_organisation(cursor, hub_uuid, org_uuid, user_uuid):
-    try:
+    logging.info("Deleting hub from organisation...")
 
-        get_entry = f"""
-                                              SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                                              WHERE hubUUID = %s and organisationUUID = %s;
-                              """
-        cursor.execute(get_entry, (hub_uuid, org_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        logging.info("Deleting hub from organisation...")
-        sql = f"""  
-            DELETE d
-            FROM {database_dict['hubs_table']} d
-            WHERE d.hubUUID = %s AND d.organisationUUID = %s;
-        """
-        cursor.execute(sql, (hub_uuid, org_uuid))
-
-        sql_audit = sql % (hub_uuid, org_uuid)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hubs_table'], 2, hub_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid
-        )
-    except Exception as e:
-        logging.error(f"Error deleting device from organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    sql = f"""  
+        DELETE d
+        FROM {database_dict['hubs_table']} d
+        WHERE d.hubUUID = %s AND d.organisationUUID = %s;
+    """
+    cursor.execute(sql, (hub_uuid, org_uuid))
 
 
 def lambda_handler(event, context):
@@ -104,7 +78,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to remove hub from organisation'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

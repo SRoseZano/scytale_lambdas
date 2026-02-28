@@ -25,239 +25,136 @@ rds_client = zanolambdashelper.helpers.create_client('rds')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
+# input_device_types = zanolambdashelper.helpers.get_input_device_types
 input_device_types = [3, 4]
 
 
 def is_input_device(cursor, device_uuid):
-    try:
-        logging.info("Executing SQL query to check for input device...")
-        sql = f"""
-            SELECT d.device_type_id
-            FROM {database_dict['schema']}.{database_dict['devices_table']} d
-            WHERE deviceUUID = %s
-            LIMIT 1
-        """
-        cursor.execute(sql, (device_uuid,))
-        result = cursor.fetchone()
+    logging.info("Executing SQL query to check for input device...")
+    sql = f"""
+        SELECT d.device_type_id
+        FROM {database_dict['schema']}.{database_dict['devices_table']} d
+        WHERE deviceUUID = %s
+        LIMIT 1
+    """
+    cursor.execute(sql, (device_uuid,))
+    result = cursor.fetchone()
 
-        if result is None:
-            logging.warning(f"No device found for UUID: {device_uuid}")
-            return False
+    if result is None:
+        raise Exception(f"No device found for UUID: {device_uuid}")
 
-        device_type_id = result[0]
-        is_input_device = device_type_id in input_device_types
+    device_type_id = result[0]
+    is_input_device = device_type_id in input_device_types
 
-        return is_input_device
-
-    except Exception as e:
-        logging.error(f"Error checking device type: {e}")
-        return False
+    return is_input_device
 
 
 def get_current_device_pools(cursor, device_uuid):
-    try:
-        logging.info("Executing SQL query to get all pools currently belonging to device...")
-        sql = f"""
-            SELECT distinct p.poolUUID
-            FROM pools_devices p
-            WHERE deviceUUID = %s
-            """
-        cursor.execute(sql, (device_uuid,))
-        sql_result = cursor.fetchall()
-        # If the result is empty, return an empty list
-        if sql_result:
-            device_pools = [t[0] for t in sql_result]
-        else:
-            device_pools = []  # No pools found
+    logging.info("Executing SQL query to get all pools currently belonging to device...")
+    sql = f"""
+        SELECT distinct p.poolUUID
+        FROM pools_devices p
+        WHERE deviceUUID = %s
+        """
+    cursor.execute(sql, (device_uuid,))
+    sql_result = cursor.fetchall()
+    # If the result is empty, return an empty list
+    if sql_result:
+        device_pools = [t[0] for t in sql_result]
+    else:
+        device_pools = []  # No pools found
 
-        return device_pools;
-    except Exception as e:
-        logging.error(f"Error obtaining current device pools: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return device_pools;
 
 
 def get_current_input_device_pools(cursor, device_uuid):
-    try:
-        logging.info("Executing SQL query to get all pools currently belonging to device...")
-        sql = f"""
-            SELECT DISTINCT pd.poolUUID
-            FROM {database_dict['schema']}.{database_dict['pools_devices_table']} AS pd
-            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} AS p
-                ON pd.poolUUID = p.poolUUID
-            WHERE pd.deviceUUID = %s
-            AND p.parentUUID IS NOT NULL;
+    logging.info("Executing SQL query to get all pools currently belonging to device...")
+    sql = f"""
+        SELECT DISTINCT pd.poolUUID
+        FROM {database_dict['schema']}.{database_dict['pools_devices_table']} AS pd
+        INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} AS p
+            ON pd.poolUUID = p.poolUUID
+        WHERE pd.deviceUUID = %s
+        AND p.parentUUID IS NOT NULL;
 
-            """
-        cursor.execute(sql, (device_uuid,))
-        sql_result = cursor.fetchall()
-        # If the result is empty, return an empty list
-        if sql_result:
-            device_pools = [t[0] for t in sql_result]
-        else:
-            device_pools = []  # No pools found
+        """
+    cursor.execute(sql, (device_uuid,))
+    sql_result = cursor.fetchall()
+    # If the result is empty, return an empty list
+    if sql_result:
+        device_pools = [t[0] for t in sql_result]
+    else:
+        device_pools = []  # No pools found
 
-        return device_pools;
-    except Exception as e:
-        logging.error(f"Error obtaining current device pools: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return device_pools;
 
 
 def get_potential_device_pools(cursor, pool_uuid, device_uuid):
-    try:
-        logging.info("Executing SQL query to get all pools that will belong to device...")
-        sql = f"""
-            WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentUUID, poolUUID
-                FROM pools
-                WHERE poolUUID = %s
+    logging.info("Executing SQL query to get all pools that will belong to device...")
+    sql = f"""
+        WITH RECURSIVE PoolHierarchy AS (
+            SELECT parentUUID, poolUUID
+            FROM pools
+            WHERE poolUUID = %s
 
-                UNION
+            UNION
 
-                SELECT p.parentUUID, p.poolUUID
-                FROM pools p
-                JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
+            SELECT p.parentUUID, p.poolUUID
+            FROM pools p
+            JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
 
-            )
-            SELECT %s AS deviceUUID, poolUUID
-            FROM PoolHierarchy;
-            """
-        cursor.execute(sql, (pool_uuid, device_uuid,))
+        )
+        SELECT %s AS deviceUUID, poolUUID
+        FROM PoolHierarchy;
+        """
+    cursor.execute(sql, (pool_uuid, device_uuid,))
 
-        sql_result = cursor.fetchall()
-        # If the result is empty, return an empty list
-        if sql_result:
-            potential_device_pools = [t[1] for t in sql_result]
-        else:
-            potential_device_pools = []  # No pools found
+    sql_result = cursor.fetchall()
+    # If the result is empty, return an empty list
+    if sql_result:
+        potential_device_pools = [t[1] for t in sql_result]
+    else:
+        potential_device_pools = []  # No pools found
 
-        return potential_device_pools
-    except Exception as e:
-        logging.error(f"Error obtaining potential device pools: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return potential_device_pools
 
 
 def append_input_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
-    try:
-        logging.info("Executing SQL query to append device to pool non recursively...")
-        # SQL query to add device to pool
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID) VALUES (%s, %s)
-
-        """
-        cursor.execute(sql, (device_uuid, pool_uuid))
-
-        sql_audit = sql % (device_uuid, pool_uuid,)
-
-        logging.info("SQL query executed successfully.")
-
-        # Fetch and log the inserted row
-        try:
-            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']} 
-                                       WHERE deviceUUID = %s """
-            cursor.execute(get_inserted_row_sql, (device_uuid,))
-            last_inserted_row = cursor.fetchall()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-                # Attempt to write to the audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['pools_devices_table'], 3, device_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error producing audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to let the outer block handle it
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found.")
-        except Exception as e:
-            logging.error(f"Error gathering inserted rows for audit logs: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to let the outer block handle it
-
-    except Exception as e:
-        # Outermost block to capture and handle all exceptions
-        logging.error(f"Unexpected error in append_device_to_pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Executing SQL query to append device to pool non recursively...")
+    # SQL query to add device to pool
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID) VALUES (%s, %s)
+    """
+    cursor.execute(sql, (device_uuid, pool_uuid))
 
 
 def append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid):
-    try:
-        logging.info("Executing SQL query to append device to pool...")
-        # SQL query to add device to pool and its children
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID)
-            WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentUUID, poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE poolUUID = %s
+    logging.info("Executing SQL query to append device to pool...")
+    # SQL query to add device to pool and its children
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_devices_table']} (deviceUUID, poolUUID)
+        WITH RECURSIVE PoolHierarchy AS (
+            SELECT parentUUID, poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']}
+            WHERE poolUUID = %s
 
-                UNION
+            UNION
 
-                SELECT p.parentUUID, p.poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM {database_dict['schema']}.{database_dict['pools_devices_table']} dp
-                    WHERE dp.deviceUUID = %s
-                    AND dp.poolUUID = p.poolUUID
-                )
+            SELECT p.parentUUID, p.poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']} p
+            JOIN PoolHierarchy ph ON p.poolUUID = ph.parentUUID
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {database_dict['schema']}.{database_dict['pools_devices_table']} dp
+                WHERE dp.deviceUUID = %s
+                AND dp.poolUUID = p.poolUUID
             )
-            SELECT %s AS deviceUUID, poolUUID
-            FROM PoolHierarchy;
-        """
+        )
+        SELECT %s AS deviceUUID, poolUUID
+        FROM PoolHierarchy;
+    """
 
-        cursor.execute(sql, (pool_uuid, device_uuid, device_uuid,))
-
-        sql_audit = sql % (pool_uuid, device_uuid, device_uuid,)
-
-        logging.info("SQL query executed successfully.")
-
-        # Fetch and log the inserted row
-        try:
-            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['pools_devices_table']} 
-                                       WHERE deviceUUID = %s """
-            cursor.execute(get_inserted_row_sql, (device_uuid,))
-            last_inserted_row = cursor.fetchall()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-                # Attempt to write to the audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['pools_devices_table'], 3, device_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error producing audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to let the outer block handle it
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found.")
-        except Exception as e:
-            logging.error(f"Error gathering inserted rows for audit logs: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to let the outer block handle it
-
-    except Exception as e:
-        # Outermost block to capture and handle all exceptions
-        logging.error(f"Unexpected error in append_device_to_pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (pool_uuid, device_uuid, device_uuid,))
 
 
 def lambda_handler(event, context):
@@ -312,8 +209,6 @@ def lambda_handler(event, context):
                 if not current_device_pools:
                     append_input_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
                 else:
-                    print(current_device_pools)
-                    print("ERROR: This device can only belong to one group")
                     raise Exception(401,
                                     "Error: This device can only belong to one group, please remove from existing group and try again")
 
@@ -325,13 +220,12 @@ def lambda_handler(event, context):
                         current_device_pools)):  # check all pools in potential branch are in current branch (ensure device isnt in multiple branches)
                     append_device_to_pool(cursor, pool_uuid, device_uuid, org_uuid, user_uuid)
                 else:
-                    print("ERROR: New pool would be in different pool branch than current")
                     raise Exception(401, "Error: New pool would be in different pool branch than current")
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to add device to pool'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

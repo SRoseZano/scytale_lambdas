@@ -29,35 +29,30 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def check_firmware_version(cursor, hub_UUID):
-    try:
-        logging.info("Executing SQL query checking current firmware version to target ")
+    logging.info("Executing SQL query checking current firmware version to target ")
 
-        sql = f"""
+    sql = f"""
 
-            SELECT 
-                CASE 
-                    WHEN current_firmware != target_firmware THEN target_firmware
-                    ELSE NULL
-                END AS result
-            FROM {database_dict['schema']}.{database_dict['hubs_table']}
-            WHERE hubUUID = %s;
+        SELECT 
+            CASE 
+                WHEN current_firmware != target_firmware THEN target_firmware
+                ELSE NULL
+            END AS result
+        FROM {database_dict['schema']}.{database_dict['hubs_table']}
+        WHERE hubUUID = %s;
+        LIMIT 1
 
-        """
-        cursor.execute(sql, (hub_UUID,))
-        hub_firmware_result = cursor.fetchall()
-        if hub_firmware_result:
-            target_firmware = hub_firmware_result[0]
-            if target_firmware[0] is None:
-                return None
-            else:
-                return target_firmware[0]
-        else:
+    """
+    cursor.execute(sql, (hub_UUID,))
+    hub_firmware_result, = cursor.fetchone()
+    if hub_firmware_result:
+        target_firmware = hub_firmware_result
+        if target_firmware is None:
             return None
-
-    except Exception as e:
-        logging.error(f"Error obtaining hub firmware: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+        else:
+            return target_firmware[0]
+    else:
+        return None
 
 
 def lambda_handler(event, context):
@@ -105,7 +100,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to retrieve hub firmware details'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

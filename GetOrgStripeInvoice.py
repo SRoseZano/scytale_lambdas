@@ -30,31 +30,24 @@ stripe_org_invoice_lambda = "GetStripeInvoice"
 
 
 def get_stripe_org_invoice(invoice_id):
-    try:
-        logging.info("Getting stripe invoice url...")
+    logging.info("Getting stripe invoice url...")
 
-        # Run policy creation lambda
-        response = lambda_client.invoke(
-            FunctionName=stripe_org_invoice_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({'stripe_invoice_id': invoice_id})
-        )
+    # Run policy creation lambda
+    response = lambda_client.invoke(
+        FunctionName=stripe_org_invoice_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({'stripe_invoice_id': invoice_id})
+    )
 
-        response_payload = json.loads(response['Payload'].read().decode('utf-8'))
-        logging.info(response_payload)
+    response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, response_payload)
+    if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
-        return response_payload['url']
-
-    except Exception as e:
-        logging.error(f"Error getting invoice: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return response_payload['url']
 
 
 def lambda_handler(event, context):
@@ -90,7 +83,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to get org invoice'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

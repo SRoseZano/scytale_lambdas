@@ -32,66 +32,55 @@ stripe_sub_update_lambda = "UpdateStripeSubscriptions"
 
 def get_valid_org_subs(cursor):
     logging.info("Getting all org subscriptions and device counts...")
-    try:
-        sql = f"""
-                WITH cte as (
-                    SELECT organisationUUID, device_type_ID from {database_dict['schema']}.{database_dict['hubs_table']}  
-                    UNION ALL 
-                    SELECT organisationUUID, device_type_ID from {database_dict['schema']}.{database_dict['devices_table']}
-                    )
-                SELECT a.organisationUUID, a.stripe_sub_id,
-                CAST(SUM(CASE WHEN device_type_ID = 1 THEN 1 ELSE 0 END) AS UNSIGNED) AS hub_count,
-                CAST(SUM(CASE WHEN device_type_ID = 2 THEN 1 ELSE 0 END) AS UNSIGNED) AS dimmable_light_count,
-                CAST(SUM(CASE WHEN device_type_ID = 3 THEN 1 ELSE 0 END) AS UNSIGNED) AS encoder_count,
-                CAST(SUM(CASE WHEN device_type_ID = 4 THEN 1 ELSE 0 END) AS UNSIGNED) AS pir_count,
-                CAST(SUM(CASE WHEN device_type_ID = 5 THEN 1 ELSE 0 END) AS UNSIGNED) AS emergency_light_count
-                FROM {database_dict['schema']}.{database_dict['organisations_table']}  a LEFT JOIN cte b on a.organisationUUID = b.organisationUUID
-                WHERE stripe_sub_id IS NOT NULL
-                GROUP BY a.organisationUUID, a.stripe_sub_id
-        """
-        cursor.execute(sql)
 
-        org_sub_result = cursor.fetchall()
+    sql = f"""
+            WITH cte as (
+                SELECT organisationUUID, device_type_ID from {database_dict['schema']}.{database_dict['hubs_table']}  
+                UNION ALL 
+                SELECT organisationUUID, device_type_ID from {database_dict['schema']}.{database_dict['devices_table']}
+                )
+            SELECT a.organisationUUID, a.stripe_sub_id,
+            CAST(SUM(CASE WHEN device_type_ID = 1 THEN 1 ELSE 0 END) AS UNSIGNED) AS hub_count,
+            CAST(SUM(CASE WHEN device_type_ID = 2 THEN 1 ELSE 0 END) AS UNSIGNED) AS dimmable_light_count,
+            CAST(SUM(CASE WHEN device_type_ID = 3 THEN 1 ELSE 0 END) AS UNSIGNED) AS encoder_count,
+            CAST(SUM(CASE WHEN device_type_ID = 4 THEN 1 ELSE 0 END) AS UNSIGNED) AS pir_count,
+            CAST(SUM(CASE WHEN device_type_ID = 5 THEN 1 ELSE 0 END) AS UNSIGNED) AS emergency_light_count
+            FROM {database_dict['schema']}.{database_dict['organisations_table']}  a LEFT JOIN cte b on a.organisationUUID = b.organisationUUID
+            WHERE stripe_sub_id IS NOT NULL
+            GROUP BY a.organisationUUID, a.stripe_sub_id
+    """
+    cursor.execute(sql)
 
-        if org_sub_result:
-            colnames = [desc[0] for desc in cursor.description]
-            return {row[1]: dict(zip(colnames, row)) for row in org_sub_result}
-        else:
-            return {}
+    org_sub_result = cursor.fetchall()
 
-    except Exception as e:
-        logging.error(f"Error getting organisation subs: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    if org_sub_result:
+        colnames = [desc[0] for desc in cursor.description]
+        return {row[1]: dict(zip(colnames, row)) for row in org_sub_result}
+    else:
+        return {}
 
 
 def update_stripe_sub(org_subs):
+    logging.info("Logging subscription usage...")
+
+    response = lambda_client.invoke(
+        FunctionName=stripe_sub_update_lambda,
+        InvocationType="RequestResponse",
+        Payload=json.dumps(org_subs)
+    )
+
+    response_payload_str = response['Payload'].read().decode('utf-8')
+    logging.info(response_payload_str)
     try:
-        logging.info("Logging subscription usage...")
+        response_payload = json.loads(response_payload_str)
+    except json.JSONDecodeError:
+        response_payload = {}
 
-        response = lambda_client.invoke(
-            FunctionName=stripe_sub_update_lambda,
-            InvocationType="RequestResponse",
-            Payload=json.dumps(org_subs)
-        )
-
-        response_payload_str = response['Payload'].read().decode('utf-8')
-        logging.info(response_payload_str)
-        try:
-            response_payload = json.loads(response_payload_str)
-        except json.JSONDecodeError:
-            response_payload = {}
-
-        if response['StatusCode'] != 200 or response_payload.get(
-                'statusCode') != 200 or 'errorMessage' in response_payload:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, response_payload)
-
-    except Exception as e:
-        logging.error(f"Error updating subscription: {e}")
+    if response['StatusCode'] != 200 or response_payload.get(
+            'statusCode') != 200 or 'errorMessage' in response_payload:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
         traceback.print_exc()
-        raise Exception(400, e)
+        raise Exception(response_payload)
 
 
 def lambda_handler(event, context):
@@ -112,7 +101,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to log org subscription useage'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

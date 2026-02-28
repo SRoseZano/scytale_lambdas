@@ -34,7 +34,7 @@ def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
     # parse to int
     invite_type_id = int(invite_type_id)
     code = generate_code()
-    max_attempts = 5
+    max_attempts = 30
     attempt = 0
     logging.info("Generating Invite Code...")
     while attempt < max_attempts:
@@ -60,16 +60,13 @@ def append_invite(cursor, organisation_uuid, invite_type_id, target_email):
                     code = generate_code()
                 else:
                     logging.error(f"Error generating code: {e}")
-                    traceback.print_exc()
-                    raise Exception(400, e)
         else:
             logging.error(f"Unsupported invite type: {invite_type_id}")
-            traceback.print_exc()
-            raise Exception(400, e)
+            raise Exception(f"Unsupported invite type: {invite_type_id}")
     else:
         logging.error(f"Maximum retry attempts reached. Unable to insert the invite.")
-        traceback.print_exc()
-        raise Exception(400, e)
+        raise Exception(f"Maximum retry attempts reached. Unable to insert the invite.")
+
     return code
 
 
@@ -120,7 +117,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to generate invite'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

@@ -21,8 +21,6 @@ rds_db = database_details['rds_db']
 rds_user = database_details['rds_user']
 rds_region = database_details['rds_region']
 
-print(rds_host)
-
 database_dict = zanolambdashelper.helpers.get_database_dict()
 
 rds_client = zanolambdashelper.helpers.create_client('rds')
@@ -31,30 +29,26 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def get_status_table(cursor):
-    try:
-        logging.info("Getting organisation details...")
-        status_lookup_sql = f"""
-            SELECT DISTINCT a.* FROM {database_dict['schema']}.{database_dict['status_lookup_table']} a 
-        """
-        cursor.execute(status_lookup_sql)
-        status_lookup_result = cursor.fetchall()
+    logging.info("Getting organisation details...")
 
-        columns = [desc[0] for desc in cursor.description]
+    status_lookup_sql = f"""
+        SELECT DISTINCT a.* FROM {database_dict['schema']}.{database_dict['status_lookup_table']} a 
+    """
+    cursor.execute(status_lookup_sql)
+    status_lookup_result = cursor.fetchall()
 
-        if status_lookup_result:
-            status_lookup_result_dict = {}
-            for row in status_lookup_result:
-                row_dict = dict(zip(columns[1:], row[1:]))
-                status_code = row[0]
-                status_lookup_result_dict[status_code] = row_dict
+    columns = [desc[0] for desc in cursor.description]
 
-            return status_lookup_result_dict
-        else:
-            return {}
-    except Exception as e:
-        logging.error(f"Error fetching status table: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    if status_lookup_result:
+        status_lookup_result_dict = {}
+        for row in status_lookup_result:
+            row_dict = dict(zip(columns[1:], row[1:]))
+            status_code = row[0]
+            status_lookup_result_dict[status_code] = row_dict
+
+        return status_lookup_result_dict
+    else:
+        return {}
 
 
 def lambda_handler(event, context):
@@ -68,7 +62,7 @@ def lambda_handler(event, context):
         body_json = event['params']['querystring']
         user_email = zanolambdashelper.helpers.decode_cognito_id_token(auth_token)
 
-        with (conn.cursor() as cursor):
+        with conn.cursor() as cursor:
 
             status_table = get_status_table(cursor)
 
@@ -78,7 +72,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to retrive status message table'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

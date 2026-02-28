@@ -27,28 +27,24 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def get_user_details(cursor, user_uuid):
-    try:
-        logging.info("Getting user details...")
-        sql = f"""
-            SELECT  userUUID, email, first_name, last_name, DATE_FORMAT(birthdate, '%m/%d/%Y') AS birthdate,
-                     zone_info, locale
-            FROM {database_dict['schema']}.{database_dict['users_table']} 
-            WHERE userUUID = %s 
-        """
-        cursor.execute(sql, (user_uuid,))
-        result = cursor.fetchone()
+    logging.info("Getting user details...")
 
-        columns = [desc[0] for desc in cursor.description]
+    sql = f"""
+        SELECT  userUUID, email, first_name, last_name, DATE_FORMAT(birthdate, '%m/%d/%Y') AS birthdate,
+                    zone_info, locale
+        FROM {database_dict['schema']}.{database_dict['users_table']} 
+        WHERE userUUID = %s 
+    """
+    cursor.execute(sql, (user_uuid,))
+    result = cursor.fetchone()
 
-        if result:
-            result_dict = dict(zip(columns, result))
-            return result_dict
-        else:
-            return {}
-    except Exception as e:
-        logging.error(f"Error fetching user details: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    columns = [desc[0] for desc in cursor.description]
+
+    if result:
+        result_dict = dict(zip(columns, result))
+        return result_dict
+    else:
+        return {}
 
 
 def lambda_handler(event, context):
@@ -69,7 +65,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to retrieve user details'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

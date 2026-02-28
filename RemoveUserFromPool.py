@@ -35,90 +35,55 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def has_permissions_to_remove_target(cursor, user_uuid, target_user_uuid, org_uuid):
-    try:
+    logging.info("Checking login user permissions...")
 
-        logging.info("Checking login user permissions...")
+    sql = f"""
+        SELECT DISTINCT permissionid
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
+        WHERE a.userUUID = %s
+        AND a.organisationUUID = %s
+        LIMIT 1
+    """
 
-        sql = f"""
-            SELECT DISTINCT permissionid
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            WHERE a.userUUID = %s
-            AND a.organisationUUID = %s
-            LIMIT 1
-        """
+    cursor.execute(sql, (user_uuid, org_uuid))
+    login_user_permissions, = cursor.fetchone()
 
-        cursor.execute(sql, (user_uuid, org_uuid))
-        login_user_permissions = cursor.fetchone()
+    logging.info("Checking target user permissions...")
 
-        logging.info("Checking target user permissions...")
+    sql = f"""
+        SELECT DISTINCT permissionid
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
+        WHERE a.userUUID = %s
+        AND a.organisationUUID = %s
+        LIMIT 1
+    """
 
-        sql = f"""
-            SELECT DISTINCT permissionid
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']} a
-            WHERE a.userUUID = %s
-            AND a.organisationUUID = %s
-            LIMIT 1
-        """
+    cursor.execute(sql, (target_user_uuid, org_uuid))
+    target_user_permissions, = cursor.fetchone()
 
-        cursor.execute(sql, (target_user_uuid, org_uuid))
-        target_user_permissions = cursor.fetchone()
-
-    except Exception as e:
-        logging.error(f"Error checking user permissions: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
-
-    if target_user_permissions[0] < 3 or login_user_permissions[0] > 2:
+    if target_user_permissions < 3 or login_user_permissions > 2:
         raise Exception(402, "Insufficient permissions to remove user from group")
 
 
 def remove_user_from_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
-    try:
+    # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
+    sql = f"""
+        DELETE FROM {database_dict['schema']}.{database_dict['pools_users_table']}
+            WHERE poolUUID IN (
+                WITH RECURSIVE PoolHierarchy AS (
+                    SELECT parentUUID, poolUUID
+                    FROM {database_dict['schema']}.{database_dict['pools_table']}
+                    WHERE poolUUID = %s
+                    UNION
+                    SELECT p.parentUUID, p.poolUUID
+                    FROM {database_dict['schema']}.{database_dict['pools_table']} p
+                    JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
+                )
+                SELECT poolUUID FROM PoolHierarchy
+            ) AND userUUID = %s;
+        """
 
-        get_entry = f"""
-                             SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
-                             WHERE userid = %s;
-             """
-        cursor.execute(get_entry, (target_user_uuid,))
-        last_inserted_row = cursor.fetchall()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        logging.info("Executing SQL query to append device to pool:")
-        logging.info(pool_uuid)
-        # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
-        sql = f"""
-            DELETE FROM {database_dict['schema']}.{database_dict['pools_users_table']}
-                WHERE poolUUID IN (
-                    WITH RECURSIVE PoolHierarchy AS (
-                        SELECT parentUUID, poolUUID
-                        FROM {database_dict['schema']}.{database_dict['pools_table']}
-                        WHERE poolUUID = %s
-                        UNION
-                        SELECT p.parentUUID, p.poolUUID
-                        FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                        JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
-                    )
-                    SELECT poolUUID FROM PoolHierarchy
-                ) AND userUUID = %s;
-            """
-
-        cursor.execute(sql, (pool_uuid, target_user_uuid))
-        sql_audit = sql % (pool_uuid, target_user_uuid)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 2, target_user_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid)
-
-    except Exception as e:
-        logging.error(f"Error removing user from pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
+    cursor.execute(sql, (pool_uuid, target_user_uuid))
 
 
 def lambda_handler(event, context):
@@ -176,7 +141,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to remove user from pool'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

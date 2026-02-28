@@ -49,45 +49,18 @@ def generate_unique_short_address(cursor, org_uuid):
 
 
 def add_radio_entry(cursor, user_uuid, org_uuid, hub_uuid, long_address):
-    try:
-        logging.info("Executing SQL query to relate radio addresses to hubs...")
 
-        # Ensure short_address is unique within the same org
-        short_address = generate_unique_short_address(cursor, org_uuid)
+    logging.info("Executing SQL query to relate radio addresses to hubs...")
 
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['hub_radios_table']} (hubUUID, long_address, short_address)
-            VALUES (%s, %s, %s)
-        """
-        cursor.execute(sql, (hub_uuid, long_address, short_address))
+    # Ensure short_address is unique within the same org
+    short_address = generate_unique_short_address(cursor, org_uuid)
 
-        sql_audit = sql % (hub_uuid, long_address, short_address)
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['hub_radios_table']} (hubUUID, long_address, short_address)
+        VALUES (%s, %s, %s)
+    """
+    cursor.execute(sql, (hub_uuid, long_address, short_address))
 
-        get_current_entry = f"""
-            SELECT * FROM {database_dict['schema']}.{database_dict['hub_radios_table']}
-            WHERE hubUUID = %s AND long_address = %s AND short_address = %s
-        """
-        cursor.execute(get_current_entry, (hub_uuid, long_address, short_address))
-        last_inserted_row = cursor.fetchall()
-
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Initial row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['hub_radios_table'], 3, user_uuid, sql_audit,
-            '{}', current_row_json, org_uuid, user_uuid
-        )
-        logging.info("Audit log submitted successfully.")
-
-    except Exception as e:
-        logging.error(f"Error adding radio addresses to hub: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
 
 
 def lambda_handler(event, context):
@@ -105,9 +78,6 @@ def lambda_handler(event, context):
         # Extract relevant attributes
         hub_uuid_raw = body_json.get('hub_UUID', '')
         long_address_raw = body_json.get('long_addr', '')
-
-        print(hub_uuid_raw)
-        print(long_address_raw)
 
         variables = {
             'hub_UUID': {'value': hub_uuid_raw['value'], 'value_type': 'uuid'},
@@ -135,8 +105,8 @@ def lambda_handler(event, context):
 
 
     except Exception as e:
-
         logging.error(f"Internal Server Error: {e}")
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to add radio addresses to hub'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

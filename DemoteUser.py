@@ -27,123 +27,58 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def can_user_be_demoted(cursor, organisation_uuid, user_uuid, target_user_uuid):
-    try:
-        logging.info("Executing SQL query to check if user can be demoted")
+    logging.info("Executing SQL query to check if user can be demoted")
 
-        sql = f"""
-            SELECT permissionid
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-            WHERE organisationUUID = %s AND userUUID = %s;
+    sql = f"""
+        SELECT permissionid
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
+        WHERE organisationUUID = %s AND userUUID = %s;
 
-        """
+    """
 
-        cursor.execute(sql, (organisation_uuid, user_uuid))
+    cursor.execute(sql, (organisation_uuid, user_uuid))
 
-        user_result = cursor.fetchone()
+    user_result, = cursor.fetchone()
 
-        sql = f"""
-            SELECT permissionid
-            FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-            WHERE organisationUUID = %s AND userUUID = %s;
+    sql = f"""
+        SELECT permissionid
+        FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
+        WHERE organisationUUID = %s AND userUUID = %s;
 
-        """
+    """
 
-        cursor.execute(sql, (organisation_uuid, target_user_uuid))
+    cursor.execute(sql, (organisation_uuid, target_user_uuid))
 
-        target_user_result = cursor.fetchone()
+    target_user_result, = cursor.fetchone()
 
-        if user_result[0] < target_user_result[0]:  # if permissions of user is higher than target
-            return True
-        else:
-            raise ValueError("You do not have permissions to demote target user")
-
-    except Exception as e:
-        logging.error(f"Error checking if user can be demoted: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    if user_result < target_user_result:  # if permissions of user is higher than target
+        return True
+    else:
+        raise Exception(400, "You do not have permissions to demote target user")
 
 
 def demote_user(cursor, org_uuid, user_uuid, target_user_uuid):
-    try:
+    logging.info("Executing SQL query to demote user to admin")
 
-        get_entry = f"""
-                                            SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-                                            WHERE organisationUUID = %s AND userUUID = %s LIMIT 1
-                                        """
-        cursor.execute(get_entry, (org_uuid, target_user_uuid))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+    sql = f"""
+        UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
+        SET permissionID = 3
+        WHERE organisationUUID = %s AND userUUID = %s;
 
-        logging.info("Executing SQL query to demote user to admin")
-        sql = f"""
-            UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
-            SET permissionID = 3
-            WHERE organisationUUID = %s AND userUUID = %s;
+    """
 
+    cursor.execute(sql, (org_uuid, target_user_uuid))
+
+    logging.info("Executing SQL query to remove user from any of the organisation pools...")
+
+    sql = f"""
+        DELETE p
+        FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
+        INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
+        WHERE p.userUUID = %s AND a.organisationUUID = %s AND a.parentUUID IS NOT NULL;
         """
 
-        cursor.execute(sql, (org_uuid, target_user_uuid))
-
-        sql_audit = sql % (org_uuid, target_user_uuid)
-
-        cursor.execute(get_entry, (org_uuid, target_user_uuid))
-
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['users_organisations_table'], 1, target_user_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid
-        )
-        logging.info("Audit log submitted successfully.")
-
-        get_entry = f"""
-                              SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-                              INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
-                              WHERE p.userUUID = %s AND a.organisationUUID = %s
-              """
-        cursor.execute(get_entry, (target_user_uuid, org_uuid,))
-        last_inserted_row = cursor.fetchall()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        logging.info("Executing SQL query to remove user from any of the organisation pools...")
-        sql = f"""
-            DELETE p
-            FROM {database_dict['schema']}.{database_dict['pools_users_table']} p 
-            INNER JOIN {database_dict['schema']}.{database_dict['pools_table']} a ON p.poolUUID = a.poolUUID 
-            WHERE p.userUUID = %s AND a.organisationUUID = %s AND a.parentUUID IS NOT NULL;
-            """
-        cursor.execute(sql, (target_user_uuid, org_uuid))
-
-        sql_audit = sql % (target_user_uuid, org_uuid)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 2, target_user_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid)
-
-        logging.info("Audit log submitted successfully.")
-
-    except Exception as e:
-        logging.error(f"Error demoting user: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (target_user_uuid, org_uuid))
 
 
 def lambda_handler(event, context):
@@ -189,7 +124,7 @@ def lambda_handler(event, context):
             conn.commit()
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to demote user'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

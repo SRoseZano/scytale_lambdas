@@ -38,10 +38,6 @@ lambda_client = zanolambdashelper.helpers.create_client('lambda')
 
 zanolambdashelper.helpers.set_logging('INFO')
 
-import boto3
-from botocore.exceptions import ClientError
-import logging
-
 
 def send_device_status_email(org_uuid, organisation_name, device_details, status_details, mailing_list, sender_email,
                              subject):
@@ -108,142 +104,123 @@ def send_device_status_email(org_uuid, organisation_name, device_details, status
 
 def insert_device_status_log(cursor, org_uuid, organisation_name, device_details, status_details):
     # inserting device logs based on multiple statuses per device
-    try:
-        logging.info("Inserting device status log entries")
-        sql = f"""
-            INSERT INTO device_status_log (
-                organisationUUID,
-                organisation_name,
-                deviceUUID,
-                device_type_ID,
-                device_long_address,
-                associated_hubUUID,
-                associated_hub_serial,
-                status_code,
-                status_message,
-                status_type
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
 
-        # Prepare rows to insert: one row per status
-        rows_to_insert = []
-        for status in status_details:
-            status_code, status_message, status_type_id = status
-            deviceUUID, device_type_ID, device_long_address, associated_hub, serial = device_details
-            rows_to_insert.append((
-                org_uuid,
-                organisation_name,
-                deviceUUID,
-                device_type_ID,
-                device_long_address,
-                associated_hub,
-                serial,
-                status_code,
-                status_message,
-                status_type_id
-            ))
+    logging.info("Inserting device status log entries")
 
-        # Execute bulk insert
-        cursor.executemany(sql, rows_to_insert)
+    sql = f"""
+        INSERT INTO device_status_log (
+            organisationUUID,
+            organisation_name,
+            deviceUUID,
+            device_type_ID,
+            device_long_address,
+            associated_hubUUID,
+            associated_hub_serial,
+            status_code,
+            status_message,
+            status_type
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
 
-        logging.info(f"Inserted {len(rows_to_insert)} device status log rows")
+    # Prepare rows to insert: one row per status
+    rows_to_insert = []
+    for status in status_details:
+        status_code, status_message, status_type_id = status
+        deviceUUID, device_type_ID, device_long_address, associated_hub, serial = device_details
+        rows_to_insert.append((
+            org_uuid,
+            organisation_name,
+            deviceUUID,
+            device_type_ID,
+            device_long_address,
+            associated_hub,
+            serial,
+            status_code,
+            status_message,
+            status_type_id
+        ))
 
-    except Exception as e:
-        logging.error(f"Error inserting device status log: {e}")
-        traceback.print_exc()
-        raise
+    # Execute bulk insert
+    cursor.executemany(sql, rows_to_insert)
+
+    logging.info(f"Inserted {len(rows_to_insert)} device status log rows")
 
 
 def get_organisation_name(cursor, org_uuid):
-    try:
-        logging.info("Getting organisation name from organisation UUID")
-        sql = f"""
-            SELECT organisation_name
-            FROM {database_dict['schema']}.{database_dict['organisations_table']}
-            WHERE organisationUUID = %s
-        """
-        cursor.execute(sql, (org_uuid,))
+    logging.info("Getting organisation name from organisation UUID")
 
-        organisation_name = cursor.fetchone()
+    sql = f"""
+        SELECT organisation_name
+        FROM {database_dict['schema']}.{database_dict['organisations_table']}
+        WHERE organisationUUID = %s
+    """
+    cursor.execute(sql, (org_uuid,))
 
-        if not organisation_name:  # if the details cannot be found
-            raise Exception("No organisation found");
+    organisation_name = cursor.fetchone()
 
-        return organisation_name
+    if not organisation_name:  # if the details cannot be found
+        raise Exception("No organisation found");
 
-    except Exception as e:
-        logging.error(f"Error getting organisation name: {e}")
-        traceback.print_exc()
-        raise
+    return organisation_name
 
 
 def get_status_details(cursor, status_codes):
-    try:
-        logging.info("Getting status details from status code")
-        placeholders = ', '.join(['%s'] * len(status_codes))
-        sql = f"""
-            SELECT status_code, status_message, status_type_id
-            FROM {database_dict['schema']}.{database_dict['status_lookup_table']}
-            WHERE status_code IN ({placeholders})  
-        """
-        cursor.execute(sql, status_codes)
+    logging.info("Getting status details from status code")
 
-        status_details = cursor.fetchall()
+    placeholders = ', '.join(['%s'] * len(status_codes))
+    sql = f"""
+        SELECT status_code, status_message, status_type_id
+        FROM {database_dict['schema']}.{database_dict['status_lookup_table']}
+        WHERE status_code IN ({placeholders})  
+    """
+    cursor.execute(sql, status_codes)
 
-        if not status_details:  # if the details cannot be found
-            raise Exception("No status details found");
+    status_details = cursor.fetchall()
 
-        return status_details
+    if not status_details:  # if the details cannot be found
+        raise Exception("No status details found");
 
-    except Exception as e:
-        logging.error(f"Error getting status details: {e}")
-        traceback.print_exc()
-        raise
+    return status_details
 
 
 def get_device_details(cursor, device_uuid):
-    try:
-        logging.info("Getting status details from status code")
-        sql = f"""
-             SELECT a.deviceUUID, a.device_type_ID, a.long_address as device_long_address, a.associated_hub, b.serial
-                FROM {database_dict['schema']}.{database_dict['devices_table']} a
-                INNER JOIN {database_dict['schema']}.{database_dict['hubs_table']} b
-                ON a.associated_hub = b.hubUUID
-                WHERE a.deviceUUID = %s 
+    logging.info("Getting status details from status code")
 
-                UNION
+    sql = f"""
+            SELECT a.deviceUUID, a.device_type_ID, a.long_address as device_long_address, a.associated_hub, b.serial
+            FROM {database_dict['schema']}.{database_dict['devices_table']} a
+            INNER JOIN {database_dict['schema']}.{database_dict['hubs_table']} b
+            ON a.associated_hub = b.hubUUID
+            WHERE a.deviceUUID = %s 
 
-                SELECT hubUUID as deviceUUID, device_type_ID, NULL as device_long_address, NULL as associated_hub, serial
-                FROM {database_dict['schema']}.{database_dict['hubs_table']} 
-                WHERE hubuuid = %s 
-        """
-        cursor.execute(sql, (device_uuid, device_uuid,))
+            UNION
 
-        device_details = cursor.fetchone()
+            SELECT hubUUID as deviceUUID, device_type_ID, NULL as device_long_address, NULL as associated_hub, serial
+            FROM {database_dict['schema']}.{database_dict['hubs_table']} 
+            WHERE hubuuid = %s 
+    """
+    cursor.execute(sql, (device_uuid, device_uuid,))
 
-        if not device_details:  # if the details cannot be found
-            raise Exception("No device details found");
+    device_details = cursor.fetchone()
 
-        return device_details
+    if not device_details:  # if the details cannot be found
+        raise Exception("No device details found")
 
-    except Exception as e:
-        logging.error(f"Error getting device details: {e}")
-        traceback.print_exc()
-        raise
+    return device_details
 
 
 def extract_topic_variables(topic):
     logging.info("Getting mqtt topic details")
+
     topic_split = topic.split('/')
-    print(topic_split);
 
     # Return both halves as a tuple
     if len(topic_split) >= 2:
         return topic_split[0], topic_split[1]
     else:
         logging.error(f"Invalid topic structure....")
-        raise
+        raise Exception("Invalid topic structure....")
 
 
 def lambda_handler(event, context):
@@ -274,7 +251,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to log status'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

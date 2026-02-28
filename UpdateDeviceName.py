@@ -27,46 +27,11 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def rename_device(cursor, device_name, device_uuid, org_uuid, user_uuid):
-    try:
+    logging.info("Renaming Device...")
 
-        get_entry = f"""
-                                     SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                                     WHERE organisationUUID = %s AND deviceUUID = %s;
-                     """
-        cursor.execute(get_entry, (org_uuid, device_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+    sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET device_name = %s WHERE organisationUUID = %s AND deviceUUID = %s "
 
-        logging.info("Renaming Device...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET device_name = %s WHERE organisationUUID = %s AND deviceUUID = %s "
-        cursor.execute(sql, (device_name, org_uuid, device_uuid,))
-
-        sql_audit = sql % (device_name, org_uuid, device_uuid,)
-
-        cursor.execute(get_entry, (org_uuid, device_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, device_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid)
-
-
-    except Exception as e:
-        logging.error(f"Error updating device name: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (device_name, org_uuid, device_uuid,))
 
 
 def lambda_handler(event, context):
@@ -120,7 +85,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to update device name'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

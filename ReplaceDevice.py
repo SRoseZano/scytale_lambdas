@@ -28,71 +28,24 @@ zanolambdashelper.helpers.set_logging('INFO')
 max_org_devices = 500
 
 
-
-
 def get_org_device_count(cursor, org_uuid):
-    try:
-        logging.info("Fetching org device count...")
-        sql = f"SELECT COUNT(DISTINCT deviceUUID) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationUUID = %s"
-        cursor.execute(sql, (org_uuid,))
-        return cursor.fetchone()[0]
-    except Exception as e:
-        logging.error(f"Error fetching org device count: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Fetching org device count...")
 
+    sql = f"SELECT COUNT(DISTINCT deviceUUID) FROM {database_dict['schema']}.{database_dict['devices_table']} WHERE organisationUUID = %s"
+
+    cursor.execute(sql, (org_uuid,))
+
+    count, = cursor.fetchone()
+
+    return count
 
 
 def update_device(cursor, long_address, associated_hub, user_email, device_uuid,
-                   org_uuid, user_uuid):
-    try:
-        get_entry = f"""
-                            SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                            WHERE organisationUUID = %s AND deviceUUID = %s;
-                            """
-        cursor.execute(get_entry, (org_uuid, device_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
+                  org_uuid, user_uuid):
+    logging.info("Updating device entry...")
 
-        logging.info("Updating device entry...")
-        sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET long_address = %s, associated_hub = %s, registrant = %s  WHERE organisationUUID = %s AND deviceUUID = %s "
-        cursor.execute(sql, (long_address,associated_hub, user_email, org_uuid, device_uuid,))
-
-        sql_audit = sql % (
-        long_address,associated_hub, user_email, org_uuid, device_uuid)
-
-
-        get_entry = f"""
-                        SELECT * FROM {database_dict['schema']}.{database_dict['devices_table']}
-                        WHERE deviceUUID = %s;
-        """
-        cursor.execute(get_entry, (device_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['devices_table'], 3, org_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid
-        )
-
-    except Exception as e:
-        logging.error(f"Error creating device entry: {e}")
-        traceback.print_exc()
-        raise Exception(400, e) from e
-
-
-
+    sql = f"UPDATE {database_dict['schema']}.{database_dict['devices_table']} SET long_address = %s, associated_hub = %s, registrant = %s  WHERE organisationUUID = %s AND deviceUUID = %s "
+    cursor.execute(sql, (long_address, associated_hub, user_email, org_uuid, device_uuid,))
 
 
 def lambda_handler(event, context):
@@ -130,27 +83,27 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
 
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                           database_dict['schema'],
-                                                                                           database_dict['users_table'],
-                                                                                           user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
             org_uuid = zanolambdashelper.helpers.get_user_organisation_details(cursor,
-                                                                                                database_dict['schema'],
-                                                                                                database_dict[
-                                                                                                    'users_organisations_table'],
-                                                                                                user_uuid)
+                                                                               database_dict['schema'],
+                                                                               database_dict[
+                                                                                   'users_organisations_table'],
+                                                                               user_uuid)
 
             # validate precursors to running this command
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
                                                         org_uuid)
 
-
-            update_device(cursor, long_address,  associated_hub, user_email,
-                                      device_uuid, org_uuid, user_uuid)
+            update_device(cursor, long_address, associated_hub, user_email,
+                          device_uuid, org_uuid, user_uuid)
             conn.commit()
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to update device'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

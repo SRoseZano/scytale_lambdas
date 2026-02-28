@@ -27,112 +27,47 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def append_user_to_all_pools(cursor, org_uuid, user_uuid):
-    try:
-        logging.info("Executing SQL query to append user to all org pools...")
-        # SQL query to find top level pool and assign to everyone under it
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
-            WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentUUID, poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE parentUUID is NULL AND organisationUUID = %s
+    logging.info("Executing SQL query to append user to all org pools...")
 
-                UNION
+    # SQL query to find top level pool and assign to everyone under it
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
+        WITH RECURSIVE PoolHierarchy AS (
+            SELECT parentUUID, poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']}
+            WHERE parentUUID is NULL AND organisationUUID = %s
 
-                SELECT p.parentUUID, p.poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
+            UNION
 
-            )
-            SELECT %s AS userUUID, poolUUID
-            FROM PoolHierarchy ph
-            WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
-                    WHERE dp.userUUID = %s
-                    AND dp.poolUUID = ph.poolUUID
-                );
+            SELECT p.parentUUID, p.poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']} p
+            JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
 
-        """
-
-        cursor.execute(sql, (org_uuid, user_uuid, user_uuid))
-
-        sql_audit = sql % (org_uuid, user_uuid, user_uuid)
-
-        get_current_entry = f"""
-                                SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']}
-                                WHERE userUUID = %s 
-                            """
-        cursor.execute(get_current_entry, (user_uuid,))
-        last_inserted_row = cursor.fetchall()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_users_table'], 3, user_uuid, sql_audit,
-            '{}', current_row_json, org_uuid, user_uuid
         )
-        logging.info("Audit log submitted successfully.")
+        SELECT %s AS userUUID, poolUUID
+        FROM PoolHierarchy ph
+        WHERE NOT EXISTS (
+                SELECT 1
+                FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
+                WHERE dp.userUUID = %s
+                AND dp.poolUUID = ph.poolUUID
+            );
 
-    except Exception as e:
-        logging.error(f"Error adding user to pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    """
+
+    cursor.execute(sql, (org_uuid, user_uuid, user_uuid))
 
 
 def promote_user_to_admin(cursor, org_uuid, user_uuid):
-    try:
+    logging.info("Executing SQL query promote user to admin")
 
-        get_entry = f"""
-                    SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']}
-                    WHERE organisationUUID = %s AND userUUID = %s;
+    sql = f"""
+        UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
+        SET permissionID = 2
+        WHERE organisationUUID = %s AND userUUID = %s;
 
-        """
-        cursor.execute(get_entry, (org_uuid, user_uuid))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-        logging.info("Executing SQL query promote user to admin")
-
-        sql = f"""
-            UPDATE {database_dict['schema']}.{database_dict['users_organisations_table']}
-            SET permissionID = 2
-            WHERE organisationUUID = %s AND userUUID = %s;
-
-        """
-        cursor.execute(sql, (org_uuid, user_uuid))
-
-        sql_audit = sql % (org_uuid, user_uuid)
-
-        cursor.execute(get_entry, (org_uuid, user_uuid))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            current_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_table'], 1, org_uuid, sql_audit,
-            historic_row_json, current_row_json, org_uuid, user_uuid
-        )
-        logging.info("Audit log submitted successfully.")
-
-    except Exception as e:
-        logging.error(f"Error promoting user to admin: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    """
+    cursor.execute(sql, (org_uuid, user_uuid))
 
 
 def lambda_handler(event, context):
@@ -184,7 +119,7 @@ def lambda_handler(event, context):
             conn.commit()
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to promote user'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

@@ -29,112 +29,45 @@ max_pool_count = 100
 
 
 def count_pools(cursor, org_uuid):
-    try:
-        logging.info("Checking current org pool count...")
-        sql = f"SELECT count(DISTINCT poolUUID) FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s"
-        cursor.execute(sql, (org_uuid,))
-        return cursor.fetchone()[0]
-    except Exception as e:
-        logging.error(f"Error getting pool count: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Checking current org pool count...")
+
+    sql = f"SELECT count(DISTINCT poolUUID) FROM {database_dict['schema']}.{database_dict['pools_table']} WHERE organisationUUID = %s"
+    cursor.execute(sql, (org_uuid,))
+    result = cursor.fetchone()
+
+    return result
 
 
 def create_pool(cursor, pool_name, parent_uuid, org_uuid, user_uuid):
-    try:
-        logging.info("Creating pool...")
-        pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, pool_name)
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (poolUUID,organisationUUID, pool_name, parentUUID) VALUES (%s, %s, %s, %s)"
-        cursor.execute(sql, (pool_uuid, org_uuid, pool_name, parent_uuid))
-        sql_audit = sql % (pool_uuid, org_uuid, pool_name, parent_uuid)
+    logging.info("Creating pool...")
 
-        # Step 2: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']} 
-                        WHERE poolUUID = %s  LIMIT 1
-                    """
-            cursor.execute(get_inserted_row_sql, (pool_uuid,))
-            last_inserted_row = cursor.fetchone()
+    pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, pool_name)
+    sql = f"INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} (poolUUID,organisationUUID, pool_name, parentUUID) VALUES (%s, %s, %s, %s)"
+    cursor.execute(sql, (pool_uuid, org_uuid, pool_name, parent_uuid))
 
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_table'], 3, pool_uuid, sql_audit,
-                    '{}', inserted_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error creating audit log: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-        return pool_uuid
-    except Exception as e:
-        logging.error(f"Error inserting pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return pool_uuid
 
 
 def inherit_parent_users_into_pool(cursor, pool_uuid, parent_uuid, org_uuid, user_uuid):
-    try:
-        logging.info("Inserting admin users of parent pool into new pool...")
-        sql = f"""INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (poolUUID, userUUID) 
-        SELECT %s, a.userUUID
-        FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
-        JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b
-        ON a.userUUID = b.userUUID 
-        WHERE b.permissionid <= 2 AND a.poolUUID = %s
+    logging.info("Inserting admin users of parent pool into new pool...")
 
-        UNION
+    sql = f"""INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (poolUUID, userUUID) 
+    SELECT %s, a.userUUID
+    FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
+    JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b
+    ON a.userUUID = b.userUUID 
+    WHERE b.permissionid <= 2 AND a.poolUUID = %s
 
-        SELECT %s, a.userUUID
-        FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
-        JOIN {database_dict['schema']}.{database_dict['pools_table']} b
-        ON a.poolUUID = b.poolUUID 
-        WHERE b.parentUUID IS NOT NULL AND a.poolUUID = %s
+    UNION
 
-        """
-        cursor.execute(sql, (pool_uuid, parent_uuid, pool_uuid, parent_uuid))
+    SELECT %s, a.userUUID
+    FROM {database_dict['schema']}.{database_dict['pools_users_table']} a
+    JOIN {database_dict['schema']}.{database_dict['pools_table']} b
+    ON a.poolUUID = b.poolUUID 
+    WHERE b.parentUUID IS NOT NULL AND a.poolUUID = %s
 
-        sql_audit = sql % (pool_uuid, parent_uuid, pool_uuid, parent_uuid)
-
-        # Step 2: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} 
-                        WHERE poolUUID = %s AND userUUID = %s LIMIT 1
-                    """
-            cursor.execute(get_inserted_row_sql, (pool_uuid, user_uuid))
-            last_inserted_row = cursor.fetchone()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_uuid, sql_audit,
-                    '{}', inserted_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error creating audit log: {e}")
-            traceback.print_exc()
-            raise
-
-    except Exception as e:
-        logging.error(f"Error inserting users of parent pool into new pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    """
+    cursor.execute(sql, (pool_uuid, parent_uuid, pool_uuid, parent_uuid))
 
 
 def lambda_handler(event, context):
@@ -182,7 +115,7 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_target_pool_in_org(cursor, database_dict['schema'],
                                                             database_dict['pools_table'], org_uuid, parent_uuid)
 
-            pool_count = count_pools(cursor, org_uuid)
+            pool_count, = count_pools(cursor, org_uuid)
             if pool_count + 1 > max_pool_count:  # if pool count with new pool is greater max then raise custom exception
                 logging.error("Org is at group limit...")
                 raise Exception(403, f"You have reached your organisations group limit of {max_pool_count}")
@@ -193,7 +126,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to create pool'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

@@ -32,174 +32,105 @@ create_thing_lambda = "RegisterThing"
 
 
 def create_hub_account(cursor, hubUUID):
-    try:
-        logging.info("Creating hub user account...")
+    logging.info("Creating hub user account...")
 
-        # Run policy creation lambda
-        response = lambda_client.invoke(
-            FunctionName=account_creation_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({})
-        )
+    # Run policy creation lambda
+    response = lambda_client.invoke(
+        FunctionName=account_creation_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({})
+    )
 
-        response_payload = json.loads(response['Payload'].read().decode('utf-8'))
-        logging.info(response_payload)
+    response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, response_payload)
+    if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
-        logging.info("Setting Account As Hub...")
+    logging.info("Setting Account As Hub...")
 
-        sql = f"""
-            UPDATE {database_dict['schema']}.{database_dict['users_table']} SET hub_user = 1 WHERE email = %s
-        """
-        cursor.execute(sql, (response_payload['body']['username'],))
+    sql = f"""
+        UPDATE {database_dict['schema']}.{database_dict['users_table']} SET hub_user = 1 WHERE email = %s
+    """
+    cursor.execute(sql, (response_payload['body']['username'],))
 
-        sql = f"""
-                    UPDATE {database_dict['schema']}.{database_dict['users_table']} SET hubUUID = %s WHERE email = %s
-                """
-        cursor.execute(sql, (hubUUID, response_payload['body']['username'],))
+    sql = f"""
+                UPDATE {database_dict['schema']}.{database_dict['users_table']} SET hubUUID = %s WHERE email = %s
+            """
+    cursor.execute(sql, (hubUUID, response_payload['body']['username'],))
 
-        return response_payload
-
-
-    except Exception as e:
-        logging.error(f"Error creating hub user account: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return response_payload
 
 
 def generate_hub_invite(auth_token):
-    try:
-        logging.info("Generating hub account organisation invite...")
+    logging.info("Generating hub account organisation invite...")
 
-        # Run policy creation lambda
-        response = lambda_client.invoke(
-            FunctionName=invite_creation_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({
-                'params': {
-                    'header': {'Authorization': auth_token}
-                },
-                'body-json': {'invite_type_id': {'value': 3, 'value_type': 'id'}}
-            })
-        )
+    # Run policy creation lambda
+    response = lambda_client.invoke(
+        FunctionName=invite_creation_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({
+            'params': {
+                'header': {'Authorization': auth_token}
+            },
+            'body-json': {'invite_type_id': {'value': 3, 'value_type': 'id'}}
+        })
+    )
 
-        response_payload = json.loads(response['Payload'].read().decode('utf-8'))
-        logging.info(response_payload)
+    response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, response_payload)
+    if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
-        return response_payload['code']
-
-
-    except Exception as e:
-        logging.error(f"Error creating hub user account: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return response_payload['code']
 
 
 def create_hub(cursor, serial, registrant, hub_name, org_uuid, user_uuid):
-    try:
+    logging.info("Creating hub entry...")
+    hub_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, hub_name)
 
-        hub_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, hub_name)
-        logging.info("Creating hub entry...")
-        sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (hubUUID, serial, registrant, hub_name, organisationUUID, device_type_id, current_firmware) \
-                VALUES (%s,%s, %s, %s, %s, %s, %s)"
-        cursor.execute(sql, (hub_uuid, serial, registrant, hub_name, org_uuid, 1, '0.0.0'))
+    sql = f"INSERT INTO {database_dict['schema']}.{database_dict['hubs_table']} (hubUUID, serial, registrant, hub_name, organisationUUID, device_type_id, current_firmware) \
+            VALUES (%s,%s, %s, %s, %s, %s, %s)"
+    cursor.execute(sql, (hub_uuid, serial, registrant, hub_name, org_uuid, 1, '1.0.0'))
 
-        sql_audit = sql % (hub_uuid, serial, registrant, hub_name, org_uuid, 1, '0.0.0')
-
-        # Fetch and log the inserted row
-        try:
-            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['hubs_table']} 
-                                       WHERE hubUUID = %s """
-            cursor.execute(get_inserted_row_sql, (hub_uuid,))
-            last_inserted_row = cursor.fetchone()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                # Attempt to write to the audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['hubs_table'], 3, hub_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error producing audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to let the outer block handle it
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found.")
-        except Exception as e:
-            logging.error(f"Error creating default pool entry inserted row: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to let the outer block handle it
-
-        return hub_uuid
-
-    except Exception as e:
-        logging.error(f"Error creating hub entry: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return hub_uuid
 
 
 def register_thing(thing_name, policy_name):
-    try:
-        logging.info("Creating hub as a thing...")
+    logging.info("Creating hub as a thing...")
 
-        # Run policy attach lambda
-        response = lambda_client.invoke(
-            FunctionName=create_thing_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({"thing_name": thing_name, "policy_name": policy_name})
-        )
+    # Run policy attach lambda
+    response = lambda_client.invoke(
+        FunctionName=create_thing_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({"thing_name": thing_name, "policy_name": policy_name})
+    )
 
-        response_payload = json.loads(response['Payload'].read().decode('utf-8'))
-        logging.info(response_payload)
+    response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, response_payload)
+    if response['StatusCode'] != 200 or response_payload['statusCode'] != 200:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
 
-        return response_payload
+        raise Exception(response_payload)
 
-
-    except Exception as e:
-        logging.error(f"Error creating hub as thing: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return response_payload
 
 
 def retrieve_org_policy(cursor, organisation_uuid):
-    try:
-        logging.info("Retrieving IoT policy name... ")
-        # Fetch associated policy and organisation UUID
-        sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
-        cursor.execute(sql, (organisation_uuid,))
-        result = cursor.fetchone()
-        policy_name = result[0]
+    logging.info("Retrieving IoT policy name... ")
+    # Fetch associated policy and organisation UUID
+    sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
+    cursor.execute(sql, (organisation_uuid,))
+    result = cursor.fetchone()
 
-        return policy_name
-
-    except Exception as e:
-        logging.error(f"Error retrieving policy: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return result
 
 
 def lambda_handler(event, context):
@@ -243,7 +174,7 @@ def lambda_handler(event, context):
             zanolambdashelper.helpers.is_user_org_admin(cursor, database_dict['schema'],
                                                         database_dict['users_organisations_table'], user_uuid,
                                                         org_uuid)
-            policy_name = retrieve_org_policy(cursor, org_uuid)
+            policy_name, = retrieve_org_policy(cursor, org_uuid)
             hub_uuid = create_hub(cursor, serial, user_email, hub_name, org_uuid, user_uuid)
             account_details = create_hub_account(cursor, hub_uuid)
             invite_code = generate_hub_invite(auth_token)
@@ -252,7 +183,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to register hub'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

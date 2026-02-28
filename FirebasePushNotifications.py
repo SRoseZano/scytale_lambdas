@@ -37,86 +37,77 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def get_device_details(cursor, device_uuid):
-    try:
-        logging.info("Getting device details from UUID")
+    logging.info("Getting device details from UUID")
+
+    sql = f"""
+        SELECT deviceUUID, device_name, device_type_ID 
+        FROM {database_dict['schema']}.{database_dict['devices_table']}
+        WHERE deviceUUID = %s
+        LIMIT 1
+    """
+    cursor.execute(sql, (device_uuid,))
+
+    device_details = cursor.fetchone()
+
+    if not device_details:  # if details do not exist for device topic then its probably a hub
         sql = f"""
-            SELECT deviceUUID, device_name, device_type_ID 
-            FROM {database_dict['schema']}.{database_dict['devices_table']}
-            WHERE deviceUUID = %s
+            SELECT hubUUID, hub_name, device_type_ID 
+            FROM {database_dict['schema']}.{database_dict['hubs_table']}
+            WHERE hubUUID = %s
             LIMIT 1
         """
         cursor.execute(sql, (device_uuid,))
 
         device_details = cursor.fetchone()
 
-        if not device_details:  # if details do not exist for device topic then its probably a hub
-            sql = f"""
-                SELECT hubUUID, hub_name, device_type_ID 
-                FROM {database_dict['schema']}.{database_dict['hubs_table']}
-                WHERE hubUUID = %s
-                LIMIT 1
-            """
-            cursor.execute(sql, (device_uuid,))
+    if not device_details:  # if the details cannot be found in either device or hub table
+        raise Exception("Device details not found for given UUID");
 
-            device_details = cursor.fetchone()
-
-        if not device_details:  # if the details cannot be found in either device or hub table
-            raise Exception("Device details not found for given UUID");
-
-        return device_details
-
-    except Exception as e:
-        logging.error(f"Error getting device details: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return device_details
 
 
 def get_status_type_id(cursor, status_code):
-    try:
-        logging.info("Getting status_type_id from status code")
-        sql = f"""
-            SELECT status_type_id
-            FROM {database_dict['schema']}.{database_dict['status_lookup_table']}
-            WHERE status_code = %s
-            LIMIT 1
-        """
-        cursor.execute(sql, (status_code,))
+    logging.info("Getting status_type_id from status code")
 
-        status_type_id = cursor.fetchone()
+    sql = f"""
+        SELECT status_type_id
+        FROM {database_dict['schema']}.{database_dict['status_lookup_table']}
+        WHERE status_code = %s
+        LIMIT 1
+    """
+    cursor.execute(sql, (status_code,))
 
-        if not status_type_id:  # if the details cannot be found in either device or hub table
-            raise Exception("Status type id not found for given status code");
+    status_type_id, = cursor.fetchone()
 
-        return status_type_id[0]
+    if not status_type_id:  # if the details cannot be found in either device or hub table
+        raise Exception("Status type id not found for given status code");
 
-    except Exception as e:
-        logging.error(f"Error getting status_type_id: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return status_type_id
 
 
 def extract_topic_variables(topic):
     logging.info("Getting mqtt topic details")
+
     topic_split = topic.split('/')
-    print(topic_split);
 
     # Return both halves as a tuple
     if len(topic_split) >= 2:
         return topic_split[0], topic_split[1]
     else:
         logging.error(f"Invalid topic structure....")
-        raise Exception(400, "Invalid topic structure....")
+        raise Exception("Invalid topic structure....")
 
 
 def get_highest_priority_alert(status_codes):
     logging.info("Getting highest priority alert code")
+
     if isinstance(status_codes, list):
         # If status_codes is a list of integers, get the max
         status = max(status_codes)
         return status
     else:
         logging.error(f"Provided status codes are not a list....")
-        raise Exception(400, "Provided status codes are not a list....")
+        raise Exception("Provided status codes are not a list....")
 
 
 def lambda_handler(event, context):
@@ -132,7 +123,6 @@ def lambda_handler(event, context):
         with conn.cursor() as cursor:
             status_code = get_highest_priority_alert(status_codes)
             status_code_type_id = get_status_type_id(cursor, status_code)
-            print(status_code_type_id)
             if status_code_type_id == 1:  # on ok status type dont send a message
                 return
             deviceid, device_name, device_type_ID = get_device_details(cursor, device_uuid)
@@ -153,19 +143,18 @@ def lambda_handler(event, context):
 
             if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
                 logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-                traceback.print_exc()
-                raise Exception(400, {response_payload})
+                raise Exception(response_payload)
 
             logging.info("Message Sent")
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to send message'
         if len(e.args) >= 2 and isinstance(e.args[0], int):
             status_value = e.args[0]
-            if status_value == 422 or status_value == 403:  # if 422 then validation
+            if status_value == 422:  # if 422 then validation
                 body_value = e.args[1]
         error_response = {
             'statusCode': status_value,

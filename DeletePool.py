@@ -27,50 +27,22 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def delete_pool(cursor, pool_uuid, org_uuid, user_uuid):
-    try:
+    logging.info("Deleting pool...")
 
-        get_historic_entry = f"""
-                                            SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']}
-                                            WHERE poolUUID = %s LIMIT 1
-                                        """
-        cursor.execute(get_historic_entry, (pool_uuid,))
-        last_inserted_row = cursor.fetchone()
-        if last_inserted_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        logging.info("Deleting pool...")
-        sql = f"""  
-            WITH RECURSIVE PoolHierarchy AS (
-              SELECT poolUUID, parentUUID
-              FROM {database_dict['schema']}.{database_dict['pools_table']}
-              WHERE poolUUID = %s
-              UNION ALL
-              SELECT p.poolUUID, p.parentUUID
-              FROM {database_dict['schema']}.{database_dict['pools_table']} p
-              INNER JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
-            )
-            DELETE FROM {database_dict['schema']}.{database_dict['pools_table']} 
-            WHERE poolUUID IN (SELECT poolUUID FROM PoolHierarchy) AND parentUUID is not null;
-            """
-        cursor.execute(sql, (pool_uuid,))
-
-        sql_audit = sql % (pool_uuid,)
-
-        zanolambdashelper.helpers.submit_to_audit_log(
-            cursor, database_dict['schema'], database_dict['audit_log_table'],
-            database_dict['pools_table'], 2, pool_uuid, sql_audit,
-            historic_row_json, '{}', org_uuid, user_uuid
+    sql = f"""  
+        WITH RECURSIVE PoolHierarchy AS (
+            SELECT poolUUID, parentUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']}
+            WHERE poolUUID = %s
+            UNION ALL
+            SELECT p.poolUUID, p.parentUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']} p
+            INNER JOIN PoolHierarchy ph ON p.parentUUID = ph.poolUUID
         )
-        logging.info("Audit log submitted successfully.")
-
-    except Exception as e:
-        logging.error(f"Error fetching user identities: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+        DELETE FROM {database_dict['schema']}.{database_dict['pools_table']} 
+        WHERE poolUUID IN (SELECT poolUUID FROM PoolHierarchy) AND parentUUID is not null;
+        """
+    cursor.execute(sql, (pool_uuid,))
 
 
 def lambda_handler(event, context):
@@ -120,7 +92,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to delete pool'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

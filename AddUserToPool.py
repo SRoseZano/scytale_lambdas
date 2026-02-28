@@ -27,71 +27,35 @@ zanolambdashelper.helpers.set_logging('INFO')
 
 
 def append_user_to_pool(cursor, pool_uuid, target_user_uuid, org_uuid, user_uuid):
-    try:
-        logging.info(f"Executing SQL query to append user to pool:{pool_uuid}")
+    logging.info(f"Executing SQL query to append user to pool:{pool_uuid}")
 
-        # Step 1: Create default pool entry in database
-        # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
-            WITH RECURSIVE PoolHierarchy AS (
-                SELECT parentUUID, poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']}
-                WHERE poolUUID = %s
+    # SQL query to add device to pool and all its children NOT NULL check to exclude trying to add NULL parent to table
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} (userUUID, poolUUID)
+        WITH RECURSIVE PoolHierarchy AS (
+            SELECT parentUUID, poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']}
+            WHERE poolUUID = %s
 
-                UNION
+            UNION
 
-                SELECT p.parentUUID, p.poolUUID
-                FROM {database_dict['schema']}.{database_dict['pools_table']} p
-                JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
-                    WHERE dp.userUUID = %s
-                    AND dp.poolUUID = p.poolUUID
-                )
-
+            SELECT p.parentUUID, p.poolUUID
+            FROM {database_dict['schema']}.{database_dict['pools_table']} p
+            JOIN PoolHierarchy ph ON ph.poolUUID = p.parentUUID
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {database_dict['schema']}.{database_dict['pools_users_table']} dp
+                WHERE dp.userUUID = %s
+                AND dp.poolUUID = p.poolUUID
             )
-            SELECT %s AS userUUID, poolUUID
-            FROM PoolHierarchy;
 
-        """
+        )
+        SELECT %s AS userUUID, poolUUID
+        FROM PoolHierarchy;
 
-        cursor.execute(sql, (pool_uuid, target_user_uuid, target_user_uuid))
+    """
 
-        sql_audit = sql % (pool_uuid, target_user_uuid, target_user_uuid)
-
-        # Step 2: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                        SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} 
-                        WHERE userUUID = %s LIMIT 1
-                    """
-            cursor.execute(get_inserted_row_sql, (target_user_uuid,))
-            last_inserted_row = cursor.fetchall()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_uuid, sql_audit,
-                    '{}', inserted_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error creating audit log: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-    except Exception as e:
-        logging.error(f"Error adding user to pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    cursor.execute(sql, (pool_uuid, target_user_uuid, target_user_uuid))
 
 
 def lambda_handler(event, context):
@@ -148,7 +112,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to add user to pool'
         if len(e.args) >= 2 and isinstance(e.args[0], int):

@@ -31,357 +31,125 @@ policy_attach_lambda = "AttachPolicy"
 
 
 def is_in_org(cursor, login_user_uuid):
-    try:
-        logging.info("Checking user permissions...")
-        sql = f"SELECT DISTINCT userUUID FROM {database_dict['schema']}.{database_dict['users_organisations_table']} WHERE userUUID = %s LIMIT 1;"
-        cursor.execute(sql, (login_user_uuid,))
-        in_org = cursor.fetchone()
-        return in_org is not None
-    except Exception as e:
-        logging.error(f"Error checking user permissions: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    logging.info("Checking user permissions...")
+
+    sql = f"SELECT DISTINCT userUUID FROM {database_dict['schema']}.{database_dict['users_organisations_table']} WHERE userUUID = %s LIMIT 1;"
+    cursor.execute(sql, (login_user_uuid,))
+    result = cursor.fetchone()
+
+    if result is not None:
+        raise Exception(412, f"User already belongs to an organisation")
+
+    return result
 
 
 def create_organisation(cursor, organisation_name, address_line_1, address_line_2, city, county, postcode, phone_number,
                         user_uuid):
-    try:
+    org_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
 
-        org_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
-        logging.info("Creating Organisation...")
+    logging.info("Creating Organisation...")
 
-        # Step 1: Create organisation entry in database
-        try:
-            sql = f"""
-                INSERT INTO {database_dict['schema']}.{database_dict['organisations_table']} 
-                (organisationUUID,organisation_name, associated_policy, address_line_1, address_line_2, city, county, postcode, phone_no) 
-                VALUES (%s,%s, CONCAT('Policy_', %s), %s, %s, %s, %s, %s, %s)
-            """
-            cursor.execute(sql,
-                           (org_uuid, organisation_name,org_uuid, address_line_1, address_line_2, city, county, postcode, phone_number))
+    sql = f"""
+            INSERT INTO {database_dict['schema']}.{database_dict['organisations_table']} 
+            (organisationUUID,organisation_name, associated_policy, address_line_1, address_line_2, city, county, postcode, phone_no) 
+            VALUES (%s,%s, CONCAT('Policy_', %s), %s, %s, %s, %s, %s, %s)
+        """
+    cursor.execute(sql,
+                   (org_uuid, organisation_name, org_uuid, address_line_1, address_line_2, city, county, postcode,
+                    phone_number))
 
-            sql_audit = sql % (org_uuid, organisation_name,org_uuid, address_line_1, address_line_2, city, county, postcode, phone_number)
-
-            logging.info("Organisation entry created successfully.")
-        except Exception as e:
-            logging.error(f"Error executing SQL to create organisation entry: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-        # Step 3: Create audit log
-        try:
-            get_inserted_row_sql = f"""SELECT * FROM {database_dict['schema']}.{database_dict['organisations_table']} 
-                                       WHERE organisationUUID = %s LIMIT 1"""
-            cursor.execute(get_inserted_row_sql, (org_uuid,))
-            last_inserted_row = cursor.fetchone()
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-                # Submit to audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['organisations_table'], 3, org_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error submitting audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to propagate to the outer block
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error fetching inserted row for audit logging: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-        # Return the organisation ID
-        return org_uuid
-
-    except Exception as e:
-        # Outermost exception handling
-        logging.error(f"Unexpected error in create_organisation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return org_uuid
 
 
-def create_user_organisation_relation(cursor, user_uuid,org_uuid):
-    try:
-        logging.info("Adding User To New Organisation...")
+def create_user_organisation_relation(cursor, user_uuid, org_uuid):
+    logging.info("Adding User To New Organisation...")
 
-        # Step 1: Create user_organisations entry in database
-        try:
-            sql = f"""
-                INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} 
-                (userUUID, organisationUUID, permissionid) 
-                VALUES (%s, %s, 1);
-            """
-            cursor.execute(sql, (user_uuid, org_uuid))
-
-            sql_audit = sql % (user_uuid, org_uuid)
-            logging.info("User organisation relation created successfully.")
-        except Exception as e:
-            logging.error(f"Error executing SQL to create user organisation relation: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-        # Step 2: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                SELECT * FROM {database_dict['schema']}.{database_dict['users_organisations_table']} 
-                WHERE userUUID = %s AND organisationUUID = %s LIMIT 1
-            """
-            cursor.execute(get_inserted_row_sql, (user_uuid, org_uuid,))
-            last_inserted_row = cursor.fetchone()
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                # Submit to audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['users_organisations_table'], 3, org_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error submitting audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to propagate to the outer block
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error fetching inserted row for audit logging: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-    except Exception as e:
-        # Outermost exception handling
-        logging.error(f"Error creating user organisation relation: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['users_organisations_table']} 
+        (userUUID, organisationUUID, permissionid) 
+        VALUES (%s, %s, 1);
+    """
+    cursor.execute(sql, (user_uuid, org_uuid))
 
 
 def create_default_pool(cursor, organisation_name, org_uuid, user_uuid):
-    try:
-        logging.info("Creating new organisation default pool...")
-        pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
-        # Step 1: Create default pool entry in database
-        try:
-            sql = f"""
-                INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} 
-                (poolUUID,organisationUUID, pool_name, parentUUID) 
-                VALUES (%s,%s, %s, NULL)
-            """
-            cursor.execute(sql, (pool_uuid, org_uuid, f"{organisation_name} Default Pool"))
-            sql_audit = sql % (pool_uuid, org_uuid, f"{organisation_name} Default Pool")
-            logging.info("Default pool entry created successfully.")
-        except Exception as e:
-            logging.error(f"Error executing SQL to create default pool: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
+    logging.info("Creating new organisation default pool...")
 
-        # Step 3: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                SELECT * FROM {database_dict['schema']}.{database_dict['pools_table']} 
-                WHERE poolUUID = %s LIMIT 1
-            """
-            cursor.execute(get_inserted_row_sql, (pool_uuid,))
-            last_inserted_row = cursor.fetchone()
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
+    pool_uuid = zanolambdashelper.helpers.generate_time_based_uuid(user_uuid, organisation_name)
 
-                # Submit to audit log
-                try:
-                    zanolambdashelper.helpers.submit_to_audit_log(
-                        cursor, database_dict['schema'], database_dict['audit_log_table'],
-                        database_dict['pools_table'], 3, pool_uuid, sql_audit,
-                        '{}', inserted_row_json, org_uuid, user_uuid
-                    )
-                    logging.info("Audit log submitted successfully.")
-                except Exception as e:
-                    logging.error(f"Error submitting audit log: {e}")
-                    traceback.print_exc()
-                    raise  # Re-raise to propagate to the outer block
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error fetching inserted row for audit logging: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_table']} 
+        (poolUUID,organisationUUID, pool_name, parentUUID) 
+        VALUES (%s,%s, %s, NULL)
+    """
+    cursor.execute(sql, (pool_uuid, org_uuid, f"{organisation_name} Default Pool"))
 
-        # Return the pool ID
-        return pool_uuid
-
-    except Exception as e:
-        # Outermost exception handling
-        logging.error(f"Error creating default pool entry: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    return pool_uuid
 
 
 def add_user_to_pool(cursor, pool_uuid, org_uuid, user_uuid):
     logging.info("Adding user to newly created default pool...")
-    try:
-        # Step 1: Create pools_users entry in database
-        sql = f"""
-            INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} 
-            (poolUUID, userUUID) 
-            VALUES (%s, %s);
-        """
-        cursor.execute(sql, (pool_uuid, user_uuid))
-        sql_audit = sql % (pool_uuid, user_uuid)
-        logging.info("User added to pool successfully.")
 
-        # Step 2: Create audit log
-        try:
-            get_inserted_row_sql = f"""
-                SELECT * FROM {database_dict['schema']}.{database_dict['pools_users_table']} 
-                WHERE poolUUID = %s AND userUUID = %s LIMIT 1
-            """
-            cursor.execute(get_inserted_row_sql, (pool_uuid, user_uuid))
-            last_inserted_row = cursor.fetchone()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                inserted_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['pools_users_table'], 3, pool_uuid, sql_audit,
-                    '{}', inserted_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after insertion for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error creating audit log: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-    except Exception as e:
-        logging.error(f"Error adding user to pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    sql = f"""
+        INSERT INTO {database_dict['schema']}.{database_dict['pools_users_table']} 
+        (poolUUID, userUUID) 
+        VALUES (%s, %s);
+    """
+    cursor.execute(sql, (pool_uuid, user_uuid))
 
 
 def update_user_identity_pool(cursor, user_identity, org_uuid, user_uuid):
     logging.info("Setting user's identity_pool_id...")
-    try:
 
-        get_previous_sql = f"""
-                SELECT * FROM {database_dict['schema']}.{database_dict['users_table']} 
-                WHERE userUUID = %s LIMIT 1
-            """
-        cursor.execute(get_previous_sql, (user_uuid,))
-        historic_row = cursor.fetchone()
-
-        if historic_row:
-            colnames = [desc[0] for desc in cursor.description]
-            historic_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, historic_row)
-        else:
-            logging.error("No row found before update for audit logs.")
-            raise ValueError("Inital row not found for audit log.")
-
-        # Step 1: Update the user entry to include the identity pool ID
-        sql = f"""
-            UPDATE {database_dict['schema']}.{database_dict['users_table']} 
-            SET identity_pool_id = %s 
-            WHERE userUUID = %s
-        """
-        cursor.execute(sql, (user_identity, user_uuid))
-        sql_audit = sql % (user_identity, user_uuid)
-        logging.info("User identity pool updated successfully.")
-
-        # Step 2: Create audit log
-        try:
-            get_updated_row_sql = f"""
-                SELECT * FROM {database_dict['schema']}.{database_dict['users_table']} 
-                WHERE userUUID = %s LIMIT 1
-            """
-            cursor.execute(get_updated_row_sql, (user_uuid,))
-            last_inserted_row = cursor.fetchone()
-
-            if last_inserted_row:
-                colnames = [desc[0] for desc in cursor.description]
-                updated_row_json = zanolambdashelper.helpers.convert_col_to_json(colnames, last_inserted_row)
-                zanolambdashelper.helpers.submit_to_audit_log(
-                    cursor, database_dict['schema'], database_dict['audit_log_table'],
-                    database_dict['users_table'], 1, user_uuid, sql_audit,
-                    historic_row_json, updated_row_json, org_uuid, user_uuid
-                )
-                logging.info("Audit log submitted successfully.")
-            else:
-                logging.error("No row found after update for audit logs.")
-                raise ValueError("Inserted row not found for audit log.")
-        except Exception as e:
-            logging.error(f"Error creating audit log: {e}")
-            traceback.print_exc()
-            raise  # Re-raise to propagate to the outer block
-
-    except Exception as e:
-        logging.error(f"Error updating user identity pool: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    sql = f"""
+        UPDATE {database_dict['schema']}.{database_dict['users_table']} 
+        SET identity_pool_id = %s 
+        WHERE userUUID = %s
+    """
+    cursor.execute(sql, (user_identity, user_uuid))
 
 
 def create_and_attach_policy(cursor, org_uuid, policy_creation_lambda, policy_attach_lambda,
                              user_identity):
-    try:
-        logging.info("Creating and Attatching IoT policy to organisation...")
-        # Fetch associated policy and organisation UUID
-        sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
-        cursor.execute(sql, (org_uuid,))
-        result = cursor.fetchone()
-        policy_name = result[0]
-        organisation_uuid = org_uuid
+    logging.info("Creating and Attatching IoT policy to organisation...")
+    # Fetch associated policy and organisation UUID
+    sql = f"SELECT associated_policy FROM {database_dict['organisations_table']} WHERE organisationUUID = %s;"
+    cursor.execute(sql, (org_uuid,))
+    result = cursor.fetchone()
+    policy_name = result[0]
+    organisation_uuid = org_uuid
 
-        # Run policy creation lambda
-        response = lambda_client.invoke(
-            FunctionName=policy_creation_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({"policy_name": policy_name, "organisation_UUID": organisation_uuid})
-        )
-        logging.info("Policy created")
+    # Run policy creation lambda
+    response = lambda_client.invoke(
+        FunctionName=policy_creation_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({"policy_name": policy_name, "organisation_UUID": organisation_uuid})
+    )
+    logging.info("Policy created")
 
-        response_payload = response['Payload'].read().decode('utf-8')
-        logging.info(response_payload)
+    response_payload = response['Payload'].read().decode('utf-8')
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, {response_payload})
+    if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
-        # Run policy attach lambda
-        response = lambda_client.invoke(
-            FunctionName=policy_attach_lambda,
-            InvocationType='RequestResponse',
-            LogType='Tail',
-            Payload=json.dumps({"policy_name": policy_name, "user_identity": user_identity})
-        )
-        logging.info("Policy attached")
+    # Run policy attach lambda
+    response = lambda_client.invoke(
+        FunctionName=policy_attach_lambda,
+        InvocationType='RequestResponse',
+        LogType='Tail',
+        Payload=json.dumps({"policy_name": policy_name, "user_identity": user_identity})
+    )
+    logging.info("Policy attached")
 
-        response_payload = response['Payload'].read().decode('utf-8')
-        logging.info(response_payload)
+    response_payload = response['Payload'].read().decode('utf-8')
+    logging.info(response_payload)
 
-        if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
-            logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
-            traceback.print_exc()
-            raise Exception(400, e)
-
-    except Exception as e:
-        logging.error(f"Error creating and attaching policy: {e}")
-        traceback.print_exc()
-        raise Exception(400, e)
+    if response['StatusCode'] != 200 or 'errorMessage' in response_payload:
+        logging.error(f"Lambda invocation failed, ResponsePayload: {response_payload}")
+        raise Exception(response_payload)
 
 
 def lambda_handler(event, context):
@@ -435,48 +203,44 @@ def lambda_handler(event, context):
 
         with conn.cursor() as cursor:
             user_uuid = zanolambdashelper.helpers.get_user_details_by_email(cursor,
-                                                                                          database_dict['schema'],
-                                                                                          database_dict['users_table'],
-                                                                                          user_email)
+                                                                            database_dict['schema'],
+                                                                            database_dict['users_table'],
+                                                                            user_email)
+            # check user isnt already in org
+            is_in_org(cursor, user_uuid)
 
-            if not is_in_org(cursor,user_uuid):
+            # Create organisation entry in database
+            org_uuid = create_organisation(cursor, organisation_name, address_line_1,
+                                           address_line_2, city, county, postcode, phone_number,
+                                           user_uuid)
 
-                # Create organisation entry in database
-                org_uuid = create_organisation(cursor, organisation_name, address_line_1,
-                                                                address_line_2, city, county, postcode, phone_number,
-                                                                user_uuid)
+            # Create user_organisations entry in database
+            create_user_organisation_relation(cursor, user_uuid, org_uuid)
 
-                # Create user_organisations entry in database
-                create_user_organisation_relation(cursor, user_uuid, org_uuid)
+            # Create default pool entry in database
+            pool_uuid = create_default_pool(cursor, organisation_name, org_uuid, user_uuid)
 
-                # Create default pool entry in database
-                pool_uuid = create_default_pool(cursor, organisation_name, org_uuid, user_uuid)
+            # Add user to pool
+            add_user_to_pool(cursor, pool_uuid, org_uuid, user_uuid)
 
-                # Add user to pool
-                add_user_to_pool(cursor, pool_uuid, org_uuid, user_uuid)
+            # Update user identity pool
+            update_user_identity_pool(cursor, user_identity, org_uuid, user_uuid)
 
-                # Update user identity pool
-                update_user_identity_pool(cursor, user_identity, org_uuid, user_uuid)
+            # Create and attach policy
+            create_and_attach_policy(cursor, org_uuid, policy_creation_lambda,
+                                     policy_attach_lambda, user_identity)
 
-                # Create and attach policy
-                create_and_attach_policy(cursor, org_uuid, policy_creation_lambda,
-                                         policy_attach_lambda, user_identity)
-
-                conn.commit()
-
-            else:
-                traceback.print_exc()
-                raise Exception(400)
+            conn.commit()
 
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
-
+        traceback.print_exc()
         status_value = 500
         body_value = 'Unable to create organisation'
         if len(e.args) >= 2 and isinstance(e.args[0], int):
             status_value = e.args[0]
-            if status_value == 422:  # if 422 then validation error
+            if status_value == 422 or status_value == 412:  # if 422 then validation error
                 body_value = e.args[1]
         error_response = {
             'statusCode': status_value,
