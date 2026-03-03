@@ -30,7 +30,7 @@ def lambda_handler(event, context):
                 "body": json.dumps({"error": "stripe_sub_id is required"})
             }
         print(stripe_sub_id)
-        invoices = stripe.Invoice.list(subscription=stripe_sub_id, limit=36)
+        invoices = stripe.Invoice.list(subscription=stripe_sub_id, status="paid", limit=36)
         result = {}
 
         for invoice in invoices.data:
