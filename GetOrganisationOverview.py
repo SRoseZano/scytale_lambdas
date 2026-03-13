@@ -32,14 +32,26 @@ def get_organisation_details(cursor, user_uuid):
     logging.info("Getting organisation details...")
 
     organisation_details_sql = f"""
-        SELECT DISTINCT a.*, b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
-        JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
-        ON a.organisationUUID = b.organisationUUID
-        WHERE b.userUUID = '{user_uuid}'
-        LIMIT 1
+        SELECT DISTINCT  a.organisationUUID,
+                a.organisation_name,
+                a.associated_policy,
+                a.address_line_1,
+                a.address_line_2,
+                a.city,
+                a.county,
+                a.postcode,
+                a.phone_no,
+                a.updated_at,
+                a.stripe_sub_id, 
+                TIME_FORMAT(a.preferred_test_time, '%H:%i') AS preferred_test_time,
+                b.permissionid FROM {database_dict['schema']}.{database_dict['organisations_table']} a 
+                JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
+                ON a.organisationUUID = b.organisationUUID
+                WHERE b.userUUID = %s
+                LIMIT 1
     """
 
-    cursor.execute(organisation_details_sql)
+    cursor.execute(organisation_details_sql, (user_uuid,))
     organisation_details_result = cursor.fetchall()
 
     columns = [desc[0] for desc in cursor.description]
@@ -64,9 +76,9 @@ def get_organisation_users(cursor, organisation_uuid, organisation_details):
             JOIN {database_dict['schema']}.{database_dict['users_organisations_table']} b 
             ON a.userUUID = b.userUUID
             WHERE a.hub_user = 0
-            AND b.organisationUUID = '{organisation_uuid}'
+            AND b.organisationUUID = %s
         """
-        cursor.execute(organisation_users_sql)
+        cursor.execute(organisation_users_sql, (organisation_uuid,))
         organisation_users_result = cursor.fetchall()
         # Convert the raw users output to a dictionary with userid as the key
         organisation_users = {user[0]: {'email': user[1], 'permissionid': user[2]} for user in
@@ -106,9 +118,9 @@ def get_pool_details(cursor, organisation_uuid, user_uuid):
         SELECT DISTINCT a.poolUUID, a.pool_name, a.parentUUID
         FROM {database_dict['schema']}.{database_dict['pools_table']} a 
         JOIN {database_dict['schema']}.{database_dict['pools_users_table']} b on a.poolUUID = b.poolUUID
-        WHERE b.userUUID = '{user_uuid}' AND a.organisationUUID = '{organisation_uuid}'
+        WHERE b.userUUID = %s AND a.organisationUUID = %s
     """
-    cursor.execute(pools_sql)
+    cursor.execute(pools_sql, (user_uuid, organisation_uuid))
     pools_result = cursor.fetchall()
 
     if pools_result:
@@ -171,9 +183,9 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
         devices_details_sql = f"""
             SELECT DISTINCT a.deviceUUID, a.long_address, a.short_address,  a.device_name, a.registrant, a.device_type_id, a.associated_hub
             FROM {database_dict['schema']}.{database_dict['devices_table']} a 
-            WHERE organisationUUID = '{org_uuid}'
+            WHERE organisationUUID = %s
         """
-        cursor.execute(devices_details_sql)
+        cursor.execute(devices_details_sql, (org_uuid,))
         devices_details_result = cursor.fetchall()
 
         if devices_details_result:
@@ -192,10 +204,10 @@ def get_device_details(cursor, org_uuid, organisation_details, user_uuid):
             JOIN {database_dict['schema']}.{database_dict['pools_devices_table']} b on a.deviceUUID = b.deviceUUID 
             JOIN {database_dict['schema']}.{database_dict['pools_users_table']} c  on b.poolUUID = c.poolUUID
             JOIN {database_dict['schema']}.{database_dict['pools_table']} d  on c.poolUUID = d.poolUUID
-            WHERE a.organisationUUID = '{org_uuid}' AND c.userUUID = '{user_uuid}' AND d.parentUUID IS NOT NULL
+            WHERE a.organisationUUID = %s AND c.userUUID = %s AND d.parentUUID IS NOT NULL
 
         """
-        cursor.execute(devices_details_sql)
+        cursor.execute(devices_details_sql, (org_uuid, user_uuid))
         devices_details_result = cursor.fetchall()
 
         if devices_details_result:
@@ -253,9 +265,9 @@ def get_hub_details(cursor, org_uuid, organisation_details):
         hub_details_sql = f"""
             SELECT DISTINCT a.hubUUID, a.serial, a.hub_name, a.registrant, a.device_type_id
             FROM {database_dict['schema']}.{database_dict['hubs_table']} a 
-            WHERE organisationUUID = '{org_uuid}'
+            WHERE organisationUUID = %s
         """
-        cursor.execute(hub_details_sql)
+        cursor.execute(hub_details_sql, (org_uuid,))
         hub_details_result = cursor.fetchall()
 
         if hub_details_result:
@@ -296,7 +308,7 @@ def lambda_handler(event, context):
                 pools_devices = get_pools_devices(cursor, device_details)
                 pools_merged = merge_pools_users_devices(pools_details, pools_users, pools_devices)
                 hub_details = get_hub_details(cursor, organisation_uuid, organisation_details)
-
+                print(organisation_details)
                 output_dict = {
                     "organisationInfo": organisation_details,
                     "organisationUsers": organisation_users,

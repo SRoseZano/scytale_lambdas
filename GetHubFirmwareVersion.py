@@ -39,7 +39,7 @@ def check_firmware_version(cursor, hub_UUID):
                 ELSE NULL
             END AS result
         FROM {database_dict['schema']}.{database_dict['hubs_table']}
-        WHERE hubUUID = %s;
+        WHERE hubUUID = %s
         LIMIT 1
 
     """
@@ -50,7 +50,7 @@ def check_firmware_version(cursor, hub_UUID):
         if target_firmware is None:
             return None
         else:
-            return target_firmware[0]
+            return target_firmware
     else:
         return None
 

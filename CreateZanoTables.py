@@ -98,7 +98,9 @@ device_type_data = {
             {"action_number": 103, "action_name": "Light Off For"},
             {"action_number": 104, "action_name": "Light Set"},
             {"action_number": 105, "action_name": "Light Toggle"},
-            {"action_number": 106, "action_name": "Brightness Set"}
+            {"action_number": 106, "action_name": "Brightness Set"},
+            {'action_number': 50, 'action_name': 'Timeout'},
+            {'action_number': 107, 'action_name': 'Light Auto Dim'}
         ]
     },
     5: {  # Device type
@@ -116,7 +118,9 @@ device_type_data = {
             {"action_number": 109, "action_name": "Battery Charging On"},
             {"action_number": 110, "action_name": "Battery Charging Off"},
             {"action_number": 111, "action_name": "Battery Charging Set"},
-            {"action_number": 112, "action_name": "Battery Brightness Set"}
+            {"action_number": 112, "action_name": "Battery Brightness Set"},
+            {'action_number': 50, 'action_name': 'Timeout'},
+            {'action_number': 113, 'action_name': 'Light Auto Dim'}
         ]
     }
 }
@@ -157,7 +161,10 @@ def lambda_handler(event, context):
                 device_type_actions,
                 device_type_events,
                 event_mapping_controls_lookup,
-                device_status_log
+                device_status_log,
+                emergency_test_schedule,
+                emergency_discharge_test_result,
+                emergency_functional_test_result
             """
             cursor.execute(drop_tables)
 
@@ -224,6 +231,7 @@ def lambda_handler(event, context):
                 phone_no VARCHAR(15) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 stripe_sub_id VARCHAR(50),
+                preferred_test_time TIME DEFAULT '01:00:00';
                 PRIMARY KEY (organisationUUID)
             );
             """
@@ -450,6 +458,7 @@ def lambda_handler(event, context):
                                           time_start SMALLINT UNSIGNED NOT NULL,
                                           time_stop SMALLINT UNSIGNED NOT NULL,
                                           control_type_id INT,
+                                          active BOOLEAN NOT NULL,
                                           FOREIGN KEY (event_ID)
                                             REFERENCES device_type_events(event_ID)
                                             ON DELETE CASCADE,
@@ -499,6 +508,46 @@ def lambda_handler(event, context):
             """
 
             cursor.execute(create_device_status_log_table)
+
+            # Create organisation table
+            create_emergency_test_schedule_table = """
+                CREATE TABLE emergency_test_schedule (
+                    organisationUUID VARCHAR(36) NOT NULL,
+                    deviceUUID VARCHAR(36) NOT NULL,
+                    test_type_id INT,
+                    test_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (deviceUUID, test_type_id),
+                    INDEX (organisationUUID),
+                    FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE
+                );
+            """
+            cursor.execute(create_emergency_test_schedule_table)
+
+            emergency_functional_test_result_table = """
+                CREATE TABLE emergency_functional_test_result (
+                    test_ID INT AUTO_INCREMENT PRIMARY KEY,
+                    organisationUUID VARCHAR(36) NOT NULL,
+                    deviceUUID VARCHAR(36) NOT NULL,
+                    result bool NOT NULL,
+                    result_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (organisationUUID),
+                    INDEX (deviceUUID)
+                );
+            """
+            cursor.execute(emergency_functional_test_result_table)
+
+            emergency_discharge_test_result_table = """
+                CREATE TABLE emergency_discharge_test_result (
+                    test_ID INT AUTO_INCREMENT PRIMARY KEY,
+                    organisationUUID VARCHAR(36) NOT NULL,
+                    deviceUUID VARCHAR(36) NOT NULL,
+                    discharge_time INT NOT NULL,
+                    result_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (organisationUUID),
+                    INDEX (deviceUUID)
+                );
+            """
+            cursor.execute(emergency_discharge_test_result_table)
 
             cursor.execute("SHOW TABLES;")
             result = cursor.fetchall()

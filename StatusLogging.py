@@ -17,8 +17,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 import os
 
-mailing_list = ['stuart.rose@zanocontrols.co.uk', 'mark.lewin@zanocontrols.co.uk',
-                'darryl.schofield@zanocontrols.co.uk', 'Thomas.Lambert@zanocontrols.co.uk']
+mailing_list = ['ScytaleAlerts@zanocontrols.co.uk']
 sender_email = 'noreply@zanocontrols.co.uk'
 
 database_details = zanolambdashelper.helpers.get_db_details()
