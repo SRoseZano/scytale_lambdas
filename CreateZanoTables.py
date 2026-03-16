@@ -518,7 +518,8 @@ def lambda_handler(event, context):
                     test_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (deviceUUID, test_type_id),
                     INDEX (organisationUUID),
-                    FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE
+                    FOREIGN KEY (organisationUUID) REFERENCES organisations(organisationUUID) ON DELETE CASCADE,
+                    FOREIGN KEY (deviceUUID) REFERENCES devices(deviceUUID) ON DELETE CASCADE
                 );
             """
             cursor.execute(create_emergency_test_schedule_table)

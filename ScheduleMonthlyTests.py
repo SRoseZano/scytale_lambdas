@@ -40,28 +40,31 @@ def set_new_schedule(cursor, device_schedules):
         logging.info("No schedules to update.")
         return
 
+    #if schedule doesnt exist then insert else update the test_time value
     sql = f"""
-        UPDATE {database_dict['schema']}.{database_dict['emergency_test_schedule_table']}
-        SET test_time = %s
-        WHERE organisationUUID = %s AND deviceUUID = %s AND test_type_id = %s
+        INSERT INTO {database_dict['schema']}.{database_dict['emergency_test_schedule_table']}
+        (organisationUUID, deviceUUID, test_type_id, test_time)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            test_time = VALUES(test_time)
     """
 
     # Prepare the values as a list of tuples matching the %s order in SQL
     values = [
         (
-            row["test_time"],  # SET test_time = %s
-            row["organisationUUID"],  # WHERE organisationUUID = %s
-            row["deviceUUID"],  # AND deviceUUID = %s
-            row["test_type_id"]  # AND test_type_id = %s
+            row["organisationUUID"],
+            row["deviceUUID"],
+            row["test_type_id"],
+            row["test_time"]
         )
         for row in device_schedules
     ]
+
 
     cursor.executemany(sql, values)
     logging.info(f"Updated {len(values)} emergency device test schedules.")
 
 def tonight_at(preferred_time):
-    """Return datetime for tonight at preferred time."""
     today = now.date()
     base = datetime.combine(today, datetime.min.time())
     test_time = base + preferred_time
@@ -97,7 +100,6 @@ def get_emergency_devices(cursor):
     """
     cursor.execute(sql,(test_type_id, emergency_light_device_id))
     result = cursor.fetchall()
-
     return result
 
 def calculate_test_times(test_data):
@@ -105,11 +107,11 @@ def calculate_test_times(test_data):
 
     for row in test_data:
 
-        deviceUUID = row["deviceUUID"]
-        orgUUID = row["organisationUUID"]
-        preferred_time = row["preferred_test_time"]
-        test_time = row["test_time"]
-        result = row["result_timestamp"]
+        deviceUUID = row[0]
+        orgUUID = row[1]
+        preferred_time = row[2]
+        test_time = row[3]
+        result = row[4]
 
         new_test_time = None
 
