@@ -530,7 +530,7 @@ def lambda_handler(event, context):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             current_year = datetime.now().year
 
-            output_key = f"{org_uuid}/{current_year}/emergency_lighting_report_{timestamp}.pdf"
+            output_key = f"{org_uuid}/{current_year}/{timestamp}_report.pdf"
 
             logging.info("Upload to s3...")
             # Upload to S3
@@ -541,7 +541,7 @@ def lambda_handler(event, context):
                 ContentType="application/pdf"
             )
             logging.info("Send to user email...")
-            send_pdf_via_ses(sender_email, user_email, final_buffer, f"emergency_lighting_report_{timestamp}.pdf")
+            send_pdf_via_ses(sender_email, user_email, final_buffer, f"{timestamp}_emergency_lighting_report.pdf")
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}")
