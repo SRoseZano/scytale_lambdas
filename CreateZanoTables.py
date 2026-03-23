@@ -231,7 +231,7 @@ def lambda_handler(event, context):
                 phone_no VARCHAR(15) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 stripe_sub_id VARCHAR(50),
-                preferred_test_time TIME DEFAULT '01:00:00';
+                preferred_test_time TIME DEFAULT '22:00:00';
                 PRIMARY KEY (organisationUUID)
             );
             """

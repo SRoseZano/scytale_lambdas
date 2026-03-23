@@ -76,6 +76,16 @@ def tonight_at(preferred_time):
 
     return test_time
 
+def at_preferred_time(date, preferred_time):
+    return date.replace(
+        hour=preferred_time.hour,
+        minute=preferred_time.minute,
+        second=0,
+        microsecond=0
+    )
+
+
+
 def get_emergency_devices(cursor):
     logging.info("Fetching emergency devices and their most recent test result...")
 
@@ -151,7 +161,7 @@ def calculate_test_times(test_data):
             "deviceUUID": deviceUUID,
             "organisationUUID": orgUUID,
             "test_type_id": 2,
-            "test_time": new_test_time,
+            "test_time": at_preferred_time(new_test_time, preferred_time),
             "pref_test_time": preferred_time,
             "result_timestamp": result
         })
@@ -228,60 +238,7 @@ def balance_schedule(rows):
                 if not moved: #if no test has been moved
                     continue
 
-        # once all movable tests are moved loop through each day
-        for day, day_devices in day_map.items():
-
-            if not day_devices: #if no devices on specified day skip
-                continue
-
-            movable_devices = [ #get devices that have a history and can be split across day (ensure new devices are tested at pref time always)
-                d for d in day_devices
-                if d["result_timestamp"] is not None
-            ]
-
-            # First-run devices stay untouched
-            if len(movable_devices) <= 1:
-                continue
-
-            # get pref test time from device
-            first_device = movable_devices[0]
-            preferred_delta = first_device["pref_test_time"]
-            preferred_time = (datetime.min + preferred_delta).time()
-
-            # Determine starting point
-            if day == now.date(): #if day being scheduled is today ensure that we dont set a time to be one thats already passed
-                start_time = max(preferred_time, now.time())
-            else:
-                start_time = preferred_time #else just use preffered time as start point
-
-            base = datetime.combine(day, start_time) #set initial date time for first test
-
-            # End of day cap to ensure the tests are balanced from base to midnight
-            end_of_day = datetime.combine(day, datetime.max.time()).replace(microsecond=0)
-
-            remaining_devices = len(movable_devices) - 1 #get devices to spread (all but initial)
-
-            available_seconds = (end_of_day - base).total_seconds() #get seconds between start and midnight
-
-            spacing = available_seconds / max(remaining_devices, 1)  #identify spacing interval
-
-            first_device["test_time"] = base
-
-            for i, device in enumerate(movable_devices[1:], start=1): #spread over day
-
-                proposed_time = base + timedelta(seconds=i * spacing)
-
-                # if proposed would spill into next day make it run on day
-                if proposed_time > end_of_day:
-                    proposed_time = end_of_day
-
-                device["test_time"] = proposed_time
-
-
     return rows
-
-
-
 
 
 

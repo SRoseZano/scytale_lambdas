@@ -74,6 +74,14 @@ def tonight_at(preferred_time):
 
     return test_time
 
+def at_preferred_time(date, preferred_time):
+    return date.replace(
+        hour=preferred_time.hour,
+        minute=preferred_time.minute,
+        second=0,
+        microsecond=0
+    )
+
 def get_emergency_devices(cursor):
     logging.info("Fetching emergency devices and their most recent test result...")
 
@@ -147,7 +155,7 @@ def calculate_test_times(test_data):
             "deviceUUID": deviceUUID,
             "organisationUUID": orgUUID,
             "test_type_id": 1,
-            "test_time": new_test_time
+            "test_time": at_preferred_time(new_test_time, preferred_time),
         })
 
     return rows
