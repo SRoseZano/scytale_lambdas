@@ -37,7 +37,7 @@ def add_monthly_test_result(cursor, org_uuid, device_uuid, result, result_time_s
 def add_yearly_test_result(cursor, org_uuid, device_uuid, result, result_time_since_epoch):
     logging.info("Inserting yearly test result...")
 
-    sql = f"""INSERT INTO {database_dict['schema']}.{database_dict['emergency_discharge_test_result_table']} (organisationUUID, deviceUUID, result, result_timestamp) 
+    sql = f"""INSERT INTO {database_dict['schema']}.{database_dict['emergency_discharge_test_result_table']} (organisationUUID, deviceUUID, discharge_time, result_timestamp) 
             VALUES (%s,%s,%s,%s)
 
     """
@@ -96,6 +96,8 @@ def lambda_handler(event, context):
                 add_yearly_test_result(cursor, org_uuid, device_uuid, result, result_time_since_epoch)
             else:
                 raise Exception("Invalid test type id")
+
+
 
             conn.commit()
 
