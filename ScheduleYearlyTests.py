@@ -35,6 +35,7 @@ test_type_id = 2
 
 now = datetime.now()
 
+
 def set_new_schedule(cursor, device_schedules):
     logging.info("Setting new emergency device test schedules...")
 
@@ -42,7 +43,7 @@ def set_new_schedule(cursor, device_schedules):
         logging.info("No schedules to update.")
         return
 
-    #if schedule doesnt exist then insert else update the test_time value
+    # if schedule doesnt exist then insert else update the test_time value
     sql = f"""
         INSERT INTO {database_dict['schema']}.{database_dict['emergency_test_schedule_table']}
         (organisationUUID, deviceUUID, test_type_id, test_time)
@@ -62,9 +63,9 @@ def set_new_schedule(cursor, device_schedules):
         for row in device_schedules
     ]
 
-
     cursor.executemany(sql, values)
     logging.info(f"Updated {len(values)} emergency device test schedules.")
+
 
 def tonight_at(preferred_time):
     today = now.date()
@@ -76,14 +77,11 @@ def tonight_at(preferred_time):
 
     return test_time
 
-def at_preferred_time(date, preferred_time):
-    return date.replace(
-        hour=preferred_time.hour,
-        minute=preferred_time.minute,
-        second=0,
-        microsecond=0
-    )
 
+def at_preferred_time(date, preferred_time):
+    base = datetime.combine(date, datetime.min.time())
+    test_time = base + preferred_time
+    return test_time
 
 
 def get_emergency_devices(cursor):
@@ -110,10 +108,9 @@ def get_emergency_devices(cursor):
             LEFT JOIN ranked_results d ON a.organisationUUID = d.organisationUUID AND a.deviceUUID = d.deviceUUID AND d.rn = 1
             WHERE a.device_type_ID = %s 
     """
-    cursor.execute(sql,(test_type_id, emergency_light_device_id))
+    cursor.execute(sql, (test_type_id, emergency_light_device_id))
     result = cursor.fetchall()
     return result
-
 
 
 def calculate_test_times(test_data):
@@ -157,6 +154,8 @@ def calculate_test_times(test_data):
             else:
                 new_test_time = test_time
 
+        print(new_test_time)
+
         rows.append({
             "deviceUUID": deviceUUID,
             "organisationUUID": orgUUID,
@@ -170,23 +169,21 @@ def calculate_test_times(test_data):
 
 
 def balance_schedule(rows):
-
     org_groups = {}
 
-    for row in rows:  #get all of the orgs in the database and add the rows applicable to that org for balancing
+    for row in rows:  # get all of the orgs in the database and add the rows applicable to that org for balancing
         org = row["organisationUUID"]
         org_groups.setdefault(org, []).append(row)
 
-    for org, devices in org_groups.items(): #itterate over each org and the devices in it
+    for org, devices in org_groups.items():  # itterate over each org and the devices in it
 
-        total_devices = len(devices) #get total amount of devices
-        max_per_day = math.ceil(total_devices / 365) #get the maximum amount of devices to be allowed per day
-
+        total_devices = len(devices)  # get total amount of devices
+        max_per_day = math.ceil(total_devices / 365)  # get the maximum amount of devices to be allowed per day
 
         day_map = {}
 
-        for d in devices: #for every device in org
-            day = d["test_time"].date() #get the date of the test and append the device to said date
+        for d in devices:  # for every device in org
+            day = d["test_time"].date()  # get the date of the test and append the device to said date
             day_map.setdefault(day, []).append(d)
 
         # ensure all days exist by looping through and setting empty string as result if not already in day_map
@@ -197,12 +194,12 @@ def balance_schedule(rows):
         # loop through days and find ones with associated devices over capacity
         for day, day_devices in day_map.items():
 
-            if len(day_devices) <= max_per_day: #if less or same skip
+            if len(day_devices) <= max_per_day:  # if less or same skip
                 continue
 
-            overflow = len(day_devices) - max_per_day #get the amount of device tests over the calculated max
+            overflow = len(day_devices) - max_per_day  # get the amount of device tests over the calculated max
 
-            #only select devices that have a historic to be moved (otherwise it has to be tested that day)
+            # only select devices that have a historic to be moved (otherwise it has to be tested that day)
             movable = [
                 d for d in day_devices
                 if d["result_timestamp"] is not None
@@ -211,36 +208,37 @@ def balance_schedule(rows):
             # prioritise oldest last test by bringing device with oldest last test result to front (ensuring its moved first)
             movable.sort(key=lambda x: x["result_timestamp"])
 
-            for device in movable[:overflow]: #for each device in the list of movable devices up to the overflow limit
+            for device in movable[:overflow]:  # for each device in the list of movable devices up to the overflow limit
 
-                result = device["result_timestamp"] #get devices last test and calc the last date the test could possibly be run and still be compliant
-                max_date = result + timedelta(days=364) #(364 days because worried day balancer logic further below might move device test a few hours over the year limit )
+                result = device[
+                    "result_timestamp"]  # get devices last test and calc the last date the test could possibly be run and still be compliant
+                max_date = result + timedelta(
+                    days=364)  # (364 days because worried day balancer logic further below might move device test a few hours over the year limit )
 
                 moved = False
 
                 # loop through all potential days and device test on said day
-                for candidate_day, candidate_devices in [(day, devices) for day, devices in sorted(day_map.items()) if len(devices) < max_per_day]:
+                for candidate_day, candidate_devices in [(day, devices) for day, devices in sorted(day_map.items()) if
+                                                         len(devices) < max_per_day]:
 
-                    if candidate_day > max_date.date(): #if adding the overflowed device to candidate day would put it over the 364 day limit then skip
+                    if candidate_day > max_date.date():  # if adding the overflowed device to candidate day would put it over the 364 day limit then skip
                         continue
 
-                    device["test_time"] = datetime.combine( #else set test time to the new date at the original hour
+                    device["test_time"] = datetime.combine(  # else set test time to the new date at the original hour
                         candidate_day,
                         device["test_time"].time()
                     )
 
-                    candidate_devices.append(device) #add device to the day list (updates count for next itteration)
-                    day_devices.remove(device) #remove the device from origional day list it was associated with
+                    candidate_devices.append(device)  # add device to the day list (updates count for next itteration)
+                    day_devices.remove(device)  # remove the device from origional day list it was associated with
 
                     moved = True
                     break
 
-                if not moved: #if no test has been moved
+                if not moved:  # if no test has been moved
                     continue
 
     return rows
-
-
 
 
 def lambda_handler(event, context):

@@ -75,12 +75,9 @@ def tonight_at(preferred_time):
     return test_time
 
 def at_preferred_time(date, preferred_time):
-    return date.replace(
-        hour=preferred_time.hour,
-        minute=preferred_time.minute,
-        second=0,
-        microsecond=0
-    )
+    base = datetime.combine(date, datetime.min.time())
+    test_time = base + preferred_time
+    return test_time
 
 def get_emergency_devices(cursor):
     logging.info("Fetching emergency devices and their most recent test result...")
